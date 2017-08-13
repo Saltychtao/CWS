@@ -150,8 +150,11 @@ class Network(object):
         self.fwd_lstm2 = LSTM(2*self.lstm_units,self.lstm_units,self.model)
         self.back_lstm2 = LSTM(2*self.lstm_units,self.lstm_units,self.model)
 
+        self.i_feature_fwd_lstm = LSTM(self.lstm_units,self.lstm_units,self.model)
+        self.i_feature_back_lstm = LSTM(self.lstm_units,self.lstm_units,self.model)
+
         self.p_hidden_W = self.model.add_parameters(
-            (self.hidden_units, 2 * self.span_nums * self.lstm_units),
+            (self.hidden_units,  2 * self.span_nums  * self.lstm_units),
             dynet.UniformInitializer(0.01)
         )
         self.p_hidden_b = self.model.add_parameters(
@@ -229,12 +232,12 @@ class Network(object):
             back1_vec = back.output()
             back1_out.append(back1_vec)
 
-        lsmt2_input = []
+        lstm2_input = []
         for (f,b) in zip(fwd1_out,reversed(back1_out)):
-            lsmt2_input.append(dynet.concatenate([f,b]))
+            lstm2_input.append(dynet.concatenate([f,b]))
 
         fwd2_out = []
-        for vec in lsmt2_input:
+        for vec in lstm2_input:
             if self.droprate > 0 and not test:
                 vec = dynet.dropout(vec,self.droprate)
             fwd2 = fwd2.add_input(vec)
@@ -242,7 +245,7 @@ class Network(object):
             fwd2_out.append(fwd_vec)
 
         back2_out = []
-        for vec in reversed(lsmt2_input):
+        for vec in reversed(lstm2_input):
             if self.droprate > 0 and not test:
                 vec = dynet.dropout(vec,self.droprate)
             back2 = back2.add_input(vec)
@@ -255,14 +258,15 @@ class Network(object):
         return fwd2_out,back2_out[::-1]
 
 
-    def evaluate_labels(self,fwd_out,back_out,lefts,rights,test=False):
-        fwd_span_out = []
-        for left_index,right_index in zip(lefts,rights):
+    def evaluate_labels(self,fwd_out,back_out,i_fwd,i_back,lefts,rights,test=False):
+        i_fwd_vec,i_back_vec = self.evaluate_pre_feature(fwd_out,back_out,i_fwd,i_back,left[0],rihgt[0],test)
+        fwd_span_out = [i_fwd_vec]
+        for left_index,right_index in zip(lefts[1:],rights[1:]):
             fwd_span_out.append(fwd_out[right_index] - fwd_out[left_index-1])
         fwd_span_vec = dynet.concatenate(fwd_span_out)
 
-        back_span_out = []
-        for left_index,right_index in zip(lefts,rights):
+        back_span_out = [i_back_vec]
+        for left_index,right_index in zip(lefts[1:],rights[1:]):
             back_span_out.append(back_out[left_index] - back_out[right_index+1])
         back_span_vec = dynet.concatenate(back_span_out)
 
@@ -277,6 +281,26 @@ class Network(object):
 
         return scores
 
+    def evaluate_pre_feature(self,fwd_out,back_out,i_fwd,i_back,left,right,test=False):
+        if left < 0 and right < 0:
+            return  i_fwd.output(),i_back.output()# current span dont stop,using previous pre_feature
+
+        else:   # otherwise, update pre_feature
+            fwd_span_embedding = fwd_out[right] - fwd_out[left-1]
+            if self.droprate > 0 and not test:
+                fwd_span_embedding = dynet.dropout(fwd_span_embedding,self.droprate)
+            vec = i_fwd.add_input(cur_span_embedding)
+            fwd = i_fwd.output()
+
+            back_span_embedding =  back_out[left] - back_out[right+1]
+            if self.droprate > 0 and not test:
+                back_span_embedding = dynet.dropout(back_span_embedding,self.droprate)
+            vec = i_back.add_input(back_span_embedding)
+            back = i_back.output()
+
+            return fwd_vec,back_vec
+            
+        
     def save(self,filename):
 
         self.model.save(filename)
@@ -447,6 +471,8 @@ class Network(object):
                         if r < drop_prob:
                             example['fwd_bigrams'][i] = 0
 
+                    i_feature_fwd = network.i_feature_fwd_lstm.initial_state()
+                    i_feature_back = network.i_feature_back_lstm.initial_state()
 
                     fwd,back = network.evaluate_recurrent(
                         example['fwd_bigrams'],
@@ -455,7 +481,7 @@ class Network(object):
 
                     for (left,right),correct in example['label_data'].items():
                         # correct = example['label_data'][(left,right)]
-                        scores = network.evaluate_labels(fwd,back,left,right)
+                        scores = network.evaluate_labels(fwd,back,i_feature_fwd,i_feature_back,left,right)
 
                         probs = dynet.softmax(scores)
                         loss = -dynet.log(dynet.pick(probs,correct))
