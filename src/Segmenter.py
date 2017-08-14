@@ -25,12 +25,14 @@ class Segmenter(object):
         rights = []
 
         #pre-s1-span
-        lefts.append(1)
-        if len(self.stack) < 1:
-            rights.append(0)
+        if len(self.stack) < 2 or self.labels[-1] == 'AP':
+            lefts.append(-1)
+            rights.append(-1)
         else:
-            s0_left = self.stack[-1][0] + 1
-            rights.append(s0_left-1)
+            s0_left = self.stack[-2][0] + 1
+            lefts.append(s0_left)
+            s0_right = self.stack[-2][1] + 1
+            rights.append(s0_right)
 
         #s1-span
         if len(self.stack) < 1:
@@ -56,8 +58,15 @@ class Segmenter(object):
         return not (self.i == 0)
 
     def no_append(self):
-        if len(self.stack) == 1:
+        top = None
+        if len(self.stack) > 0:
+            top = self.stack[-1]
             self.stack.pop()
+        if len(self.stack) > 1:
+            pre_span = self.stack[-1]
+            self.stack.pop()
+        if top is not None:
+            self.stack.append(top)
         self.stack.append((self.i,self.i))
         self.labels.append('NA')
         self.i += 1
@@ -114,6 +123,8 @@ class Segmenter(object):
         fwd_bigrams = data['fwd_bigrams']
         unigrams = data['unigrams']
         fwd,back = network.evaluate_recurrent(fwd_bigrams,unigrams,test=True)
+        i_fwd = network.i_feature_fwd_lstm.initial_state()
+        i_back = network.i_feature_back_lstm.initial_state()
 
         for step in range(n):
             features = state.l_features()
@@ -132,6 +143,8 @@ class Segmenter(object):
                     scores = network.evaluate_labels(
                         fwd,
                         back,
+                        i_fwd,
+                        i_back,
                         left,
                         right,
                         test=True,
@@ -146,7 +159,7 @@ class Segmenter(object):
                         action = 'AP'
                     else:
                         action = 'NA'
-            
+
             label_data[features] = Segmenter.l_action_index(correct_action)
             state.take_action(action)
         
@@ -199,15 +212,19 @@ class Segmenter(object):
         fwd_b,u = fm.sentence_sequence(seg_sentence)
 
         fwd,back = network.evaluate_recurrent(fwd_b,u,test=True)
+        i_fwd = network.i_feature_fwd_lstm.initial_state()
+        i_back = network.i_feature_back_lstm.initial_state()
 
         for step in range(n):
             if not state.can_append():
                 action = 'NA'
             else:
-                left,right = state.l_features(seg_sentence)
+                left,right = state.l_features()
                 scores = network.evaluate_labels(
                     fwd,
                     back,
+                    i_fwd,
+                    i_back,
                     left,
                     right,
                     test=True,

@@ -80,6 +80,8 @@ class LSTM(object):
             self.W_o = dynet.parameter(self.lstm.W_o)
             self.b_o = dynet.parameter(self.lstm.b_o)
 
+            self.outputs.append(self.h)
+
         def add_input(self, input_vec):
 
             x = dynet.concatenate([input_vec, self.h])
@@ -89,8 +91,8 @@ class LSTM(object):
             g = dynet.tanh(self.W_c * x + self.b_c)
             o = dynet.logistic(self.W_o * x + self.b_o)
 
-            c = dynet.cwise_multiply(f, self.c) + dynet.cwise_multiply(i, g)
-            h = dynet.cwise_multiply(o, dynet.tanh(c))
+            c = dynet.cmult(f, self.c) + dynet.cmult(i, g)
+            h = dynet.cmult(o, dynet.tanh(c))
 
             self.c = c
             self.h = h
@@ -259,7 +261,7 @@ class Network(object):
 
 
     def evaluate_labels(self,fwd_out,back_out,i_fwd,i_back,lefts,rights,test=False):
-        i_fwd_vec,i_back_vec = self.evaluate_pre_feature(fwd_out,back_out,i_fwd,i_back,left[0],rihgt[0],test)
+        i_fwd_vec,i_back_vec = self.evaluate_pre_feature(fwd_out,back_out,i_fwd,i_back,lefts[0],rights[0],test)
         fwd_span_out = [i_fwd_vec]
         for left_index,right_index in zip(lefts[1:],rights[1:]):
             fwd_span_out.append(fwd_out[right_index] - fwd_out[left_index-1])
@@ -289,14 +291,14 @@ class Network(object):
             fwd_span_embedding = fwd_out[right] - fwd_out[left-1]
             if self.droprate > 0 and not test:
                 fwd_span_embedding = dynet.dropout(fwd_span_embedding,self.droprate)
-            vec = i_fwd.add_input(cur_span_embedding)
-            fwd = i_fwd.output()
+            vec = i_fwd.add_input(fwd_span_embedding)
+            fwd_vec = i_fwd.output()
 
             back_span_embedding =  back_out[left] - back_out[right+1]
             if self.droprate > 0 and not test:
                 back_span_embedding = dynet.dropout(back_span_embedding,self.droprate)
             vec = i_back.add_input(back_span_embedding)
-            back = i_back.output()
+            back_vec = i_back.output()
 
             return fwd_vec,back_vec
             
