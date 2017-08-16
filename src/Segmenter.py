@@ -9,13 +9,12 @@ from seg_sentence import FScore
 class Segmenter(object):
     def __init__(self,n,seg_sentence):
         self.todo = 0
-        self.stack = []
         self.n = n
         self.i = 0
         self.labels = []
         self.gold_sentence = seg_sentence.sentence[1:-1]
 
-    def l_features(self):
+    ''' def l_features(self):
         """
         Return a list of features of each index.
         (pre-s1-span,s1-span,curIndex)
@@ -54,34 +53,13 @@ class Segmenter(object):
     
     def can_append(self):
         return not (self.i == 0)
-
-    def no_append(self):
-        if len(self.stack) == 1:
-            self.stack.pop()
-        self.stack.append((self.i,self.i))
-        self.labels.append('NA')
-        self.i += 1
-
+    '''
     def wrap_result(self):
-        return SegSentence([('S','NA')]+[(c,predict_l) for ((c,gold_l),predict_l) in zip(self.gold_sentence,self.labels)]+[('/S','NA')])
+        ### TODO
 
-    @staticmethod
-    def l_action_index(action):
-        if action == 'AP':
-            return 0
-        else:
-            return 1
 
-    @staticmethod
-    def l_action(index):
-        if index == 0:
-            return 'AP'
-        elif index == 1:
-            return 'NA'
-        else:
-            raise  RuntimeError('Unknown index')
 
-    @staticmethod
+     @staticmethod
     def training_data(seg_sentence):
         l_features = []
         n = len(seg_sentence.sentence) - 2
@@ -96,7 +74,7 @@ class Segmenter(object):
                 state.take_action(action)
                 l_features.append((features,Segmenter.l_action_index(action)))
 
-        return l_features
+        return l_features 
 
     @staticmethod
     def exploration(data,fm,network,alpha=1.0,beta=0):
@@ -160,68 +138,52 @@ class Segmenter(object):
         }
 
         return example,accuracy
-    def finished(self):
-        return self.i == self.n
-
-    def append(self):
-        left,right = self.stack.pop()
-        self.stack.append((left,right+1))
-        self.i += 1
-        self.labels.append('AP')
-
-    def take_action(self,action):
-        # (left0,right0) = self.stack.pop()
-        # if action == 'AP':
-        #     self.stack.append((left0,right0+1))
-        # elif action == 'NA':
-        #     self.stack.append((right0+1,right0+1))
-        # self.i += 1
-        # self.labels.append(action)
-        if action == 'NA':
-            self.no_append()
-        elif action == 'AP':
-            self.append()
 
 
     def l_oracle(self):
         return self.gold_sentence[self.i][1]
+ 
 
+    def select_combine(self,scores)
+        pos = np.argmax([score for  (index,score) in scores])
+        self.cur_layer.combine(scores[pos][0])
+        
     @staticmethod
     def segment(seg_sentence,fm,network):
-
         dynet.renew_cg()
         network.prep_params()
 
         n = seg_sentence.n0
         state = Segmenter(n,seg_sentence)
 
-
-        fwd_b,u = fm.sentence_sequence(seg_sentence)
-
         fwd,back = network.evaluate_recurrent(fwd_b,u,test=True)
 
+        state.cur_layer = state.prep_layer()
         for step in range(n):
-            if not state.can_append():
-                action = 'NA'
-            else:
-                left,right = state.l_features(seg_sentence)
+            ap_scores = []
+
+            for i in range(1,len(state.cur_layer)+1):
+                span0 = state.cur_layer[i]
+                span1 = state.cur_layer[i + 1]
+                left,right = state.l_features(span0,span1)
                 scores = network.evaluate_labels(
                     fwd,
                     back,
                     left,
                     right,
-                    test=True,
+                    test=True
                 ).npvalue()
                 action_index = np.argmax(scores)
                 action = Segmenter.l_action(action_index)
-            state.take_action(action)
+                if action == 'combine':
+                    ap_scores.append((i,scores[0]))
+            if ap_scores == []:
+                break
+            state.select_combine(ap_scores)
 
-        if not state.finished():
-            raise RuntimeError ('Bad ending state!')
+        predicted = self.wrap_result()
+        return predicted    
 
-        predicted = state.wrap_result()
-        return predicted
- 
     @staticmethod
     def evaluate_corpus(sentences,fm,network):
         accuracy = FScore()
@@ -254,4 +216,25 @@ class Segmenter(object):
         
 
         
+class Layer(object):
+    def __init__(self,gold_sentence)
+        self.layer = [(i+1,i+1) for i in range(len(gold_sentence)) ]
+        self.sentence = gold_sentence
+
+    def __len__(self):
+        return len(self.layer)
+
+    def combine(self,pos):
+        layer = []
+        for i in range(len(self.layer)):
+            if i is not pos:
+                layer.append(self.layer[i])
+            else:
+                span0 = self.layer[i]
+                span1 = self.layer[i+1]
+                layer.append(span0[0],span1[1])
+                i += 1
+        self.layer = layer
+
+
 
