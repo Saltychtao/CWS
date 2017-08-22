@@ -1,4 +1,4 @@
-
+#TODO modify the features in Segmenter.py and debug
 from __future__ import print_function
 
 import time
@@ -150,9 +150,6 @@ class Network(object):
         self.fwd_lstm2 = LSTM(2*self.lstm_units,self.lstm_units,self.model)
         self.back_lstm2 = LSTM(2*self.lstm_units,self.lstm_units,self.model)
 
-        self.i_feature_fwd_lstm = LSTM(self.lstm_units,self.lstm_units,self.model)
-        self.i_feature_back_lstm = LSTM(self.lstm_units,self.lstm_units,self.model)
-
         self.p_hidden_W = self.model.add_parameters(
             (self.hidden_units,  2 * self.span_nums  * self.lstm_units),
             dynet.UniformInitializer(0.01)
@@ -258,15 +255,14 @@ class Network(object):
         return fwd2_out,back2_out[::-1]
 
 
-    def evaluate_labels(self,fwd_out,back_out,i_fwd,i_back,lefts,rights,test=False):
-        i_fwd_vec,i_back_vec = self.evaluate_pre_feature(fwd_out,back_out,i_fwd,i_back,left[0],rihgt[0],test)
-        fwd_span_out = [i_fwd_vec]
-        for left_index,right_index in zip(lefts[1:],rights[1:]):
+    def evaluate_labels(self,fwd_out,back_out,lefts,rights,test=False):
+        fwd_span_out = []
+        for left_index,right_index in zip(lefts,rights):
             fwd_span_out.append(fwd_out[right_index] - fwd_out[left_index-1])
         fwd_span_vec = dynet.concatenate(fwd_span_out)
 
-        back_span_out = [i_back_vec]
-        for left_index,right_index in zip(lefts[1:],rights[1:]):
+        back_span_out = []
+        for left_index,right_index in zip(lefts,rights):
             back_span_out.append(back_out[left_index] - back_out[right_index+1])
         back_span_vec = dynet.concatenate(back_span_out)
 
@@ -443,50 +439,17 @@ class Network(object):
                 for (_,acc ) in explore:
                     training_acc += acc
 
-                batch = [example for (example, _ ) in explore]
+                batch = [result for (result, _ ) in explore]
 
                 dynet.renew_cg()
                 network.prep_params()
 
                 errors = []
-                for example in batch:
-                    ## random UNKing ##
-                    for (i,uni) in enumerate(example['unigrams']):
-                        if uni <= 2:
-                            continue
-
-                        u_freq = fm.unigrams_freq_list[uni]
-                        drop_prob = unk_params / (unk_params + u_freq)
-                        r = np.random.random()
-                        if r < drop_prob :
-                            example['unigrams'][i] = 0
-
-                    for (i,bi) in enumerate(example['fwd_bigrams']):
-                        if bi <= 2:
-                            continue
-
-                        b_freq = fm.bigrams_freq_list[bi]
-                        drop_prob = unk_params / (unk_params + b_freq)
-                        r = np.random.random()
-                        if r < drop_prob:
-                            example['fwd_bigrams'][i] = 0
-
-                    i_feature_fwd = network.i_feature_fwd_lstm.initial_state()
-                    i_feature_back = network.i_feature_back_lstm.initial_state()
-
-                    fwd,back = network.evaluate_recurrent(
-                        example['fwd_bigrams'],
-                        example['unigrams'],
-                    )
-
-                    for (left,right),correct in example['label_data'].items():
-                        # correct = example['label_data'][(left,right)]
-                        scores = network.evaluate_labels(fwd,back,i_feature_fwd,i_feature_back,left,right)
-
-                        probs = dynet.softmax(scores)
-                        loss = -dynet.log(dynet.pick(probs,correct))
-                        errors.append(loss)
-                    total_states += len(example['label_data'])
+                total_states = 0
+                for result in batch:
+                    loss = result['loss']
+                    errors.extend(loss)
+                    total_states += result['state_cnt']
 
                 batch_error = dynet.esum(errors)
                 total_cost += batch_error.scalar_value()
@@ -495,7 +458,7 @@ class Network(object):
 
                 mean_cost = total_cost/total_states
 
-                print(
+                print(  
                     '\rBatch {}  Mean Cost {:.4f}  [Train: {}]'.format(
                         b,
                         mean_cost,

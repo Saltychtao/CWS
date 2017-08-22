@@ -151,13 +151,11 @@ class Corpus(object):
         seg_sentence = SegSentence(sentence)
         fwd_bigrams,unigrams = self.sentence_sequence(seg_sentence)
 
-        features = Segmenter.training_data(seg_sentence)
 
         return {
             'segSentence':seg_sentence,
             'fwd_bigrams': fwd_bigrams,
             'unigrams': unigrams,
-            'features':features,
         }
         
     def gold_data_from_file(self,fname):

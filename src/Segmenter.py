@@ -1,4 +1,4 @@
-
+#TODO 修改特征 确定新的词典信息 
 import time
 import dynet
 import numpy as np
@@ -7,6 +7,7 @@ from seg_sentence import FScore
 
 
 class Segmenter(object):
+
     def __init__(self,n,seg_sentence):
         self.todo = 0
         self.n = n
@@ -14,7 +15,7 @@ class Segmenter(object):
         self.labels = []
         self.gold_sentence = seg_sentence.sentence[1:-1]
 
-    ''' def l_features(self):
+     def l_features(self,span0,span1):
         """
         Return a list of features of each index.
         (pre-s1-span,s1-span,curIndex)
@@ -25,59 +26,37 @@ class Segmenter(object):
 
         #pre-s1-span
         lefts.append(1)
-        if len(self.stack) < 1:
-            rights.append(0)
-        else:
-            s0_left = self.stack[-1][0] + 1
-            rights.append(s0_left-1)
+        rights.append(span0[0]-1)
 
-        #s1-span
-        if len(self.stack) < 1:
-            lefts.append(1)
-            rights.append(0)
-        else:
-            s0_left = self.stack[-1][0] + 1
-            lefts.append(s0_left)
-            s0_right = self.stack[-1][1] +1
-            rights.append(s0_right)
+        #s0-span
+        lefts.append(span0[0])
+        rights.append(span0[1])
 
-        # curIndex
-        lefts.append(self.i)
-        rights.append(self.i)
+        # s1-span
+        lefts.append(span1[0])
+        rights.append(span1[1])
         #post-span
 
-        lefts.append(self.i+1)
+        lefts.append(span1[1]+1)
         rights.append(self.n)
 
         return tuple(lefts),tuple(rights)
     
-    def can_append(self):
-        return not (self.i == 0)
-    '''
     def wrap_result(self):
         ### TODO
+        np_indexs = self.cur_layer.np_indexs()
+        self.labels = ['AP' for i in range(self.n)]
+        for index in np_indexs:
+            labels[index-1] = 'NA'
 
-
-
-     @staticmethod
-    def training_data(seg_sentence):
-        l_features = []
-        n = len(seg_sentence.sentence) - 2
-        state = Segmenter(n,seg_sentence)
-
-        for step in range(n):
-            if not state.can_append():
-                state.no_append() 
-            else:
-                action = state.l_oracle()
-                features = state.l_features()
-                state.take_action(action)
-                l_features.append((features,Segmenter.l_action_index(action)))
-
-        return l_features 
+        return SegSentence(
+            [('S','NA')] +
+            [(c,l) for (c,l) in zip(self.gold_sentence,self.labels)] +
+            ['\S','NA']
+        )
 
     @staticmethod
-    def exploration(data,fm,network,alpha=1.0,beta=0):
+    def exploration(data,fm,network,drop_prob):
         dynet.renew_cg()
         network.prep_params()
 
@@ -89,65 +68,132 @@ class Segmenter(object):
         state = Segmenter(n,segSentence)
         state.seg_sentence = [c for (c, l) in segSentence.sentence[1:-1]]
 
+        ### Random UNK
+        for (i,uni) in enumerate(data['unigrams']):
+            if uni <= 2:
+                continue
+
+            u_freq = fm.unigrams_freq_list[uni]
+            drop_prob = unk_params / (unk_params + u_freq)
+            r = np.random.random()
+            if r < drop_prob :
+                 data['unigrams'][i] = 0
+
+        for (i,bi) in enumerate(data['fwd_bigrams']):
+            if bi <= 2:
+                continue
+
+            b_freq = fm.bigrams_freq_list[bi]
+            drop_prob = unk_params / (unk_params + b_freq)
+            r = np.random.random()
+            if r < drop_prob:
+                data['fwd_bigrams'][i] = 0
+        
         fwd_bigrams = data['fwd_bigrams']
-        unigrams = data['unigrams']
-        fwd,back = network.evaluate_recurrent(fwd_bigrams,unigrams,test=True)
+        unigrams = data['unigrams']        
+        fwd,back = network.evaluate_recurrent(fwd_bigrams,unigrams,test=False)
 
+        errors = []
+        state_cnt = 0
         for step in range(n):
-            features = state.l_features()
-            if not state.can_append():
-                action = 'NA'
-                correct_action = 'NA'
-            else:
+            ap_scores = []
 
-                correct_action = state.l_oracle()
-
-                r = np.random.random()
-                if r < beta:
-                    action = correct_action
-                else:
-                    left,right = features
-                    scores = network.evaluate_labels(
-                        fwd,
-                        back,
-                        left,
-                        right,
-                        test=True,
-                    ).npvalue()
-
-                    # sample from distribution
-                    exp = np.exp(scores * alpha)
-                    softmax = exp / (exp.sum())
-                    r = np.random.random()
-
-                    if r <= softmax[0]:
-                        action = 'AP'
-                    else:
-                        action = 'NA'
+            for i in range(1,len(state.cur_layer)+1):
+                span0 = state.cur_layer[i]
+                span1 = state.cur_layer[i + 1]
+                left,right = state.l_features(span0,span1)
+                scores = network.evaluate_labels(
+                    fwd,
+                    back,
+                    left,
+                    right,
+                    test=True
+                )
+                ap_scores.append(scores)
             
-            label_data[features] = Segmenter.l_action_index(correct_action)
-            state.take_action(action)
+            loss1 = state.get_loss_1(ap_scores)
+            loss2 = state.get_loss_2(ap_scores)
+
+            errors.extend(loss1)
+            errors.extend(loss2)
+
+            state_cnt += 1
+
+            if loss2 == []:
+                break
         
         predicted = state.wrap_result()
         accuracy = predicted.compare(segSentence)
 
-        example = {
-            'fwd_bigrams':fwd_bigrams,
-            'unigrams':unigrams,
-            'label_data':label_data
+        result = {
+            'state_cnt':state_cnt,
+            'loss':errors,
         }
 
-        return example,accuracy
+        return result,accuracy
 
 
     def l_oracle(self):
         return self.gold_sentence[self.i][1]
  
 
-    def select_combine(self,scores)
-        pos = np.argmax([score for  (index,score) in scores])
-        self.cur_layer.combine(scores[pos][0])
+
+    def get_loss_1(self,scores)
+
+        assert(len(scores) == len(self.cur_layer))
+
+        error = []
+        for i in range(len(self.cur_layer) - 1):
+            span0 = self.cur_layer[i]
+            span1 = self.cur_layer[i+1]
+            index = span1[0]
+            probs = dynet.softmax(scores[i])
+            
+            correct = self.l_action_index(self.gold_sentence[index][1])
+            loss = - dynet.log(dynet.pick(probs,correct))
+            errors.append(loss)
+
+        return errors
+
+    def get_loss_2(self,scores)
         
+        assert(len(scores) == len(self.cur_layer))
+
+        errors = []
+        _,combine_scores = self.select_position(scores)
+        if combine_scores is not [] :
+            probs = dynet.softmax(combine_scores)
+            index = np.argmax(combine_scores.npvalue)
+            length = len(combine_scores)
+            loss = -dynet.log(length*np.pick(probs,index) - dynet.sum(probs))
+            errors.append(loss)
+
+        return errors
+
+    def select_position(self,scores):
+        
+        assert(len(scores) = len(self.cur_layer))
+        pos = []
+        combine_scores = []
+        for i in range(len(scores)):
+            if scores[i][0] > scores[i][1]:
+                pos.append(self.cur_layer.layer[i][1] + 1)
+                combine_scores.append(scores[i][0])
+
+        return pos,combine_scores
+
+    def combine(self,pos):
+        self.cur_layer.combine(pos)
+
+    def select_combine(self,scores):
+        combine_indexs,scores = self.select_position(scores)
+        if pos is not [] :
+            index = np.argmax(scores)
+            self.combine(index)
+            return True
+        else:
+            return False
+
     @staticmethod
     def segment(seg_sentence,fm,network):
         dynet.renew_cg()
@@ -162,7 +208,7 @@ class Segmenter(object):
         for step in range(n):
             ap_scores = []
 
-            for i in range(1,len(state.cur_layer)+1):
+            for i in range(0,len(state.cur_layer)-1):
                 span0 = state.cur_layer[i]
                 span1 = state.cur_layer[i + 1]
                 left,right = state.l_features(span0,span1)
@@ -173,13 +219,10 @@ class Segmenter(object):
                     right,
                     test=True
                 ).npvalue()
-                action_index = np.argmax(scores)
-                action = Segmenter.l_action(action_index)
-                if action == 'combine':
-                    ap_scores.append((i,scores[0]))
-            if ap_scores == []:
+                ap_scores.append(scores)
+            
+            if not state.select_combine(ap_scores):
                 break
-            state.select_combine(ap_scores)
 
         predicted = self.wrap_result()
         return predicted    
@@ -227,14 +270,17 @@ class Layer(object):
     def combine(self,pos):
         layer = []
         for i in range(len(self.layer)):
-            if i is not pos:
+            if self.layer[i][1] + 1 != pos:
                 layer.append(self.layer[i])
             else:
                 span0 = self.layer[i]
                 span1 = self.layer[i+1]
-                layer.append(span0[0],span1[1])
+                layer.append((span0[0],span1[1]))
                 i += 1
         self.layer = layer
+
+    def wrap_result(self):
+
 
 
 
