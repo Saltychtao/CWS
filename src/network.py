@@ -110,13 +110,16 @@ class Network(object):
             self,
             bigrams_size,
             unigrams_size,
+            tag_size,
             bigrams_dims,
             unigrams_dims,
             lstm_units,
             hidden_units,
-            label_size,
-            span_nums,
-            droprate=0,
+            seg_out,
+            tag_out,
+            seg_spans=4,
+            tag_spans=3,
+            droprate=0
     ):
 
         self.bigrams_size = bigrams_size
@@ -125,7 +128,8 @@ class Network(object):
         self.unigrams_size = unigrams_size
         self.lstm_units = lstm_units
         self.hidden_units = hidden_units
-        self.span_nums =span_nums
+        self.seg_out = seg_out
+        self.tag_out = tag_out
         self.droprate = droprate
         self.label_size = label_size
 
@@ -150,23 +154,41 @@ class Network(object):
         self.fwd_lstm2 = LSTM(2*self.lstm_units,self.lstm_units,self.model)
         self.back_lstm2 = LSTM(2*self.lstm_units,self.lstm_units,self.model)
 
-        self.p_hidden_W = self.model.add_parameters(
-            (self.hidden_units, 2 * self.span_nums * self.lstm_units),
+        self.seg_hidden_W = self.model.add_parameters(
+            (self.hidden_units, 2 * self.seg_spans * self.lstm_units),
             dynet.UniformInitializer(0.01)
         )
-        self.p_hidden_b = self.model.add_parameters(
+        self.seg_hidden_b = self.model.add_parameters(
             (self.hidden_units,),
             dynet.ConstInitializer(0)
         )
-        self.p_output_W = self.model.add_parameters(
-            (self.label_size, self.hidden_units),
+        self.seg_output_W = self.model.add_parameters(
+            (self.seg_out, self.hidden_units),
             dynet.ConstInitializer(0)
         )
-        self.p_output_b = self.model.add_parameters(
-            (self.label_size,),
+        self.seg_output_b = self.model.add_parameters(
+            (self.seg_out,),
             dynet.ConstInitializer(0)
         )
-      #  self.p_embed2lstm_W = self.model.add_parameters(
+
+        self.tag_hidden_W = self.model.add_parameters(
+            (self.hidden_units, 2 * self.tag_spans * lstm_units),
+            dynet.UniformInitializer(0.01),
+        )
+        self.tag_hidden_b = self.model.add_parameters(
+            (self.hidden_units,),
+            dynet.ConstInitializer(0),
+        )
+        self.tag_output_W = self.model.add_parameters(
+            (self.tag_out,self.hidden_units),
+            dynet.ConstInitializer(0)
+        )
+        self.tag_output_b = self.model.add_parameters(
+            (self.tag_out,),
+            dynet.ConstInitializer(0),
+        )
+
+    #  self.p_embed2lstm_W = self.model.add_parameters(
       #      (self.lstm_units, self.bigrams_dims + self.unigrams_dims),
       #      dynet.UniformInitializer(0.01)
       #  )
@@ -185,12 +207,22 @@ class Network(object):
         self.unigram_embed.init_from_array(
             np.random.uniform(-0.01, 0.01, self.unigram_embed.shape())
         )
+        self.tag_ember.init_from_array(
+            np.random.uniform(-0.01,0.01,self.tag_embed.shape()),
+        )
 
     def prep_params(self):
-        self.hidden_W = dynet.parameter(self.p_hidden_W)
-        self.hidden_b = dynet.parameter(self.p_hidden_b)
-        self.output_W = dynet.parameter(self.p_output_W)
-        self.output_b = dynet.parameter(self.p_output_b)
+        self.W1_seg = dynet.parameter(self.seg_hidden_W)
+        self.b1_seg = dynet.parameter(self.seg_hidden_b)
+
+        self.W2_seg = dynet.parameter(self.seg_output_W)
+        self.b2_seg = dynet.parameter(self.seg_output_b)
+
+        self.W1_tag = dynet.parameter(self.tag_hidden_W)
+        self.b1_tag = dynet.parameter(self.tag_hidden_b)
+
+        self.W2_tag = dynet.parameter(self.tag_out_W)
+        self.b2_tag = dynet.parameter(self.tag_out_b)
        # self.embed2lstm_W = dynet.parameter(self.p_embed2lstm_W)
        # self.embed2lstm_b = dynet.parameter(self.p_embed2lstm_b)
 
@@ -255,7 +287,7 @@ class Network(object):
         return fwd2_out,back2_out[::-1]
 
 
-    def evaluate_labels(self,fwd_out,back_out,lefts,rights,test=False):
+    def evaluate_segs(self,fwd_out,back_out,lefts,rights,test=False):
         fwd_span_out = []
         for left_index,right_index in zip(lefts,rights):
             fwd_span_out.append(fwd_out[right_index] - fwd_out[left_index-1])
@@ -271,11 +303,36 @@ class Network(object):
         if self.droprate >0 and not test:
             hidden_input = dynet.dropout(hidden_input,self.droprate)
 
-        hidden_output = self.activation(self.hidden_W * hidden_input + self.hidden_b)
+        hidden_output = self.activation(self.W1_seg * hidden_input + self.b1_seg)
 
-        scores = (self.output_W * hidden_output + self.output_b)
+        scores = (self.W2_seg* hidden_output + self.b2_seg)
 
         return scores
+
+    def evaluate_tags(self,fwd_out,back_out,lefts,rigths,tests=False):
+
+        fwd_span_out = []
+        for left_index, right_index in zip(lefts,rigths):
+            fwd_span_out.append(fwd_out[right_index] - fwd_out[left_index -1 ])
+        fwd_span_vec = dynet.concatenate(fwd_span_out)
+
+        back_span_out = []
+        for left_index,right_index in zip(lefts,rights):
+            back_span_out.append(back_out[left_index] - back_out[right_index + 1])
+        back_span_vec = dynet.concatenate(back_span_vec)
+
+        hidden_input = dynet.concatenate([fwd_span_vec,back_span_vec])
+
+        if self.droprate > 0 and not test:
+            hidden_input = dynet.dropout(hidden_input,self.droprate)
+
+        hidden_output = self.activation(self.W1_tag * hidden_input + self.b1_tag)
+
+        scores = (self.W2_tag * hidden_output + self.b2_tag)
+
+        return scores
+            
+        
 
     def save(self,filename):
 
@@ -453,14 +510,23 @@ class Network(object):
                         example['unigrams'],
                     )
 
-                    for (left,right),correct in example['label_data'].items():
+                    for (left,right),correct in example['seg_data'].items():
                         # correct = example['label_data'][(left,right)]
                         scores = network.evaluate_labels(fwd,back,left,right)
 
                         probs = dynet.softmax(scores)
                         loss = -dynet.log(dynet.pick(probs,correct))
                         errors.append(loss)
-                    total_states += len(example['label_data'])
+                    total_states += len(example['seg_data'])
+
+                    for (left,right),correct in example['tag_data'].items():
+                        scores = network.evaluate_tags(fwd,back,left,right)
+
+                        probs = dynet.softmax(scores)
+                        loss = -dynet.log(dynet.pick(probs,correct))
+                        errors.append(loss)
+                    total_states += len(example['tag_data'])
+
 
                 batch_error = dynet.esum(errors)
                 total_cost += batch_error.scalar_value()

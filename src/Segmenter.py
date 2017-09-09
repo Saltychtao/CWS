@@ -15,7 +15,7 @@ class Segmenter(object):
         self.labels = []
         self.gold_sentence = seg_sentence.sentence[1:-1]
 
-    def l_features(self):
+    def s_features(self):
         """
         Return a list of features of each index.
         (pre-s1-span,s1-span,curIndex)
@@ -45,8 +45,8 @@ class Segmenter(object):
         # curIndex
         lefts.append(self.i)
         rights.append(self.i)
-        #post-span
 
+        #post-span
         lefts.append(self.i+1)
         rights.append(self.n)
 
@@ -66,14 +66,14 @@ class Segmenter(object):
         return SegSentence([('S','NA')]+[(c,predict_l) for ((c,gold_l),predict_l) in zip(self.gold_sentence,self.labels)]+[('/S','NA')])
 
     @staticmethod
-    def l_action_index(action):
+    def s_action_index(action):
         if action == 'AP':
             return 0
         else:
             return 1
 
     @staticmethod
-    def l_action(index):
+    def s_action(index):
         if index == 0:
             return 'AP'
         elif index == 1:
@@ -83,7 +83,7 @@ class Segmenter(object):
 
     @staticmethod
     def training_data(seg_sentence):
-        l_features = []
+        s_features = []
         n = len(seg_sentence.sentence) - 2
         state = Segmenter(n,seg_sentence)
 
@@ -91,19 +91,19 @@ class Segmenter(object):
             if not state.can_append():
                 state.no_append() 
             else:
-                action = state.l_oracle()
-                features = state.l_features()
+                action = state.s_oracle()
+                features = state.s_features()
                 state.take_action(action)
-                l_features.append((features,Segmenter.l_action_index(action)))
+                s_features.append((features,Segmenter.s_action_index(action)))
 
-        return l_features
+        return s_features
 
     @staticmethod
     def exploration(data,fm,network,alpha=1.0,beta=0):
         dynet.renew_cg()
         network.prep_params()
 
-        label_data = {}
+        seg_data = {}
 
         segSentence = data['segSentence']
 
@@ -116,13 +116,13 @@ class Segmenter(object):
         fwd,back = network.evaluate_recurrent(fwd_bigrams,unigrams,test=True)
 
         for step in range(n):
-            features = state.l_features()
+            features = state.s_features()
             if not state.can_append():
                 action = 'NA'
                 correct_action = 'NA'
             else:
 
-                correct_action = state.l_oracle()
+                correct_action = state.s_oracle()
 
                 r = np.random.random()
                 if r < beta:
@@ -147,7 +147,7 @@ class Segmenter(object):
                     else:
                         action = 'NA'
             
-            label_data[features] = Segmenter.l_action_index(correct_action)
+            seg_data[features] = Segmenter.s_action_index(correct_action)
             state.take_action(action)
         
         predicted = state.wrap_result()
@@ -156,7 +156,7 @@ class Segmenter(object):
         example = {
             'fwd_bigrams':fwd_bigrams,
             'unigrams':unigrams,
-            'label_data':label_data
+            'seg_data':seg_data
         }
 
         return example,accuracy
@@ -170,20 +170,16 @@ class Segmenter(object):
         self.labels.append('AP')
 
     def take_action(self,action):
-        # (left0,right0) = self.stack.pop()
-        # if action == 'AP':
-        #     self.stack.append((left0,right0+1))
-        # elif action == 'NA':
-        #     self.stack.append((right0+1,right0+1))
-        # self.i += 1
-        # self.labels.append(action)
         if action == 'NA':
             self.no_append()
         elif action == 'AP':
             self.append()
+        elif action.startwith('label-'):
+            self.label(action[6:].split('-'[1]))
 
 
-    def l_oracle(self):
+
+    def s_oracle(self):
         return self.gold_sentence[self.i][1]
 
     @staticmethod
@@ -204,7 +200,7 @@ class Segmenter(object):
             if not state.can_append():
                 action = 'NA'
             else:
-                left,right = state.l_features(seg_sentence)
+                left,right = state.s_features(seg_sentence)
                 scores = network.evaluate_labels(
                     fwd,
                     back,
@@ -213,7 +209,7 @@ class Segmenter(object):
                     test=True,
                 ).npvalue()
                 action_index = np.argmax(scores)
-                action = Segmenter.l_action(action_index)
+                action = Segmenter.s_action(action_index)
             state.take_action(action)
 
         if not state.finished():
