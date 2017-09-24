@@ -124,9 +124,9 @@ class Corpus(object):
 
     def total_span_nums(self):
         if self.total_labels() == 2 : # Using 'Append','Not-append' Label system
-            return 4
+            return 2
         elif self.total_labels() == 4 : # Using 'B,M,S,E' label system
-            return 4
+            return 2
 
     def sentence_sequence(self,seg_sentence):
 

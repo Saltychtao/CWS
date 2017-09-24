@@ -89,8 +89,8 @@ class LSTM(object):
             g = dynet.tanh(self.W_c * x + self.b_c)
             o = dynet.logistic(self.W_o * x + self.b_o)
 
-            c = dynet.cwise_multiply(f, self.c) + dynet.cwise_multiply(i, g)
-            h = dynet.cwise_multiply(o, dynet.tanh(c))
+            c = dynet.cmult(f, self.c) + dynet.cmult(i, g)
+            h = dynet.cmult(o, dynet.tanh(c))
 
             self.c = c
             self.h = h
@@ -256,45 +256,36 @@ class Network(object):
 
 
     def evaluate_labels(self,fwd_out,back_out,lefts,rights,test=False):
+        #fwd_out_value = [f.npvalue() for f in fwd_out]
+        #back_out_value=[b.npvalue() for b in back_out]
         fwd_span_out = []
         for left_index,right_index in zip(lefts,rights):
             fwd_span_out.append(fwd_out[right_index] - fwd_out[left_index-1])
         fwd_span_vec = dynet.concatenate(fwd_span_out)
+        #fwd_span_vec_value = [f.npvalue() for f in fwd_span_vec]
 
         back_span_out = []
         for left_index,right_index in zip(lefts,rights):
             back_span_out.append(back_out[left_index] - back_out[right_index+1])
         back_span_vec = dynet.concatenate(back_span_out)
+        #back_span_vec_value = [b.npvalue() for f in back_span_vec]
 
         hidden_input = dynet.concatenate([fwd_span_vec,back_span_vec])
+        #hidden_input_value = hidden_input.npvalue()
 
         if self.droprate >0 and not test:
             hidden_input = dynet.dropout(hidden_input,self.droprate)
 
         hidden_output = self.activation(self.hidden_W * hidden_input + self.hidden_b)
+        #hidden_output_value = hidden_output.npvalue()
+
+        #W_value = self.output_W.npvalue()
+        #b_value = self.output_b.npvalue()
 
         scores = (self.output_W * hidden_output + self.output_b)
 
+        #scores_value = scores.npvalue()
         return scores
-
-    def evaluate_pre_feature(self,fwd_out,back_out,i_fwd,i_back,left,right,test=False):
-        if left < 0 and right < 0:
-            return  i_fwd.output(),i_back.output()# current span dont stop,using previous pre_feature
-
-        else:   # otherwise, update pre_feature
-            fwd_span_embedding = fwd_out[right] - fwd_out[left-1]
-            if self.droprate > 0 and not test:
-                fwd_span_embedding = dynet.dropout(fwd_span_embedding,self.droprate)
-            vec = i_fwd.add_input(cur_span_embedding)
-            fwd = i_fwd.output()
-
-            back_span_embedding =  back_out[left] - back_out[right+1]
-            if self.droprate > 0 and not test:
-                back_span_embedding = dynet.dropout(back_span_embedding,self.droprate)
-            vec = i_back.add_input(back_span_embedding)
-            back = i_back.output()
-
-            return fwd_vec,back_vec
             
         
     def save(self,filename):
@@ -422,46 +413,36 @@ class Network(object):
             total_states = 0
             training_acc = FScore()
 
-            np.random.shuffle(training_data)
+            #np.random.shuffle(training_data)
 
             for b in xrange(num_batched):
                 batch = training_data[(b * batch_size) : (b + 1) * batch_size]
 
-                explore = [
-                    Segmenter.exploration(
-                        example,
-                        fm,
-                        network,
-                        alpha=alpha,
-                        beta=beta
-                    ) for example in batch
-                ]
-                for (_,acc ) in explore:
+                error = []
+                for example in batch:
+
+                    loss,acc = Segmenter.exploration(example,fm,network,droprate,unk_params)
+                    #loss = result['loss']
+                    #total_states += result['state_cnt']
                     training_acc += acc
+                    error.extend(loss)
 
-                batch = [result for (result, _ ) in explore]
+                    if len(loss) == 0:
+                        continue
+                    batch_error = dynet.esum(loss)
+                    #error_value = batch_error.npvalue()
+                    total_cost += batch_error.scalar_value()
+                    batch_error.backward()
+                    network.trainer.update()
 
-                dynet.renew_cg()
-                network.prep_params()
+                #value = network.output_W.npvalue()
+                #print (network.output_b.npvalue())
+                #mean_cost = total_cost/total_states
 
-                errors = []
-                total_states = 0
-                for result in batch:
-                    loss = result['loss']
-                    errors.extend(loss)
-                    total_states += result['state_cnt']
-
-                batch_error = dynet.esum(errors)
-                total_cost += batch_error.scalar_value()
-                batch_error.backward()
-                network.trainer.update()
-
-                mean_cost = total_cost/total_states
-
-                print(  
+                print(
                     '\rBatch {}  Mean Cost {:.4f}  [Train: {}]'.format(
                         b,
-                        mean_cost,
+                        0,
                         training_acc,
                     ),
                     end='',

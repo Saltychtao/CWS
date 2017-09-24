@@ -1,4 +1,4 @@
-#TODO 修改特征 确定新的词典信息 
+
 import time
 import dynet
 import numpy as np
@@ -15,7 +15,7 @@ class Segmenter(object):
         self.labels = []
         self.gold_sentence = seg_sentence.sentence[1:-1]
 
-     def l_features(self,span0,span1):
+    def l_features(self,span0,span1):
         """
         Return a list of features of each index.
         (pre-s1-span,s1-span,curIndex)
@@ -25,8 +25,8 @@ class Segmenter(object):
         rights = []
 
         #pre-s1-span
-        lefts.append(1)
-        rights.append(span0[0]-1)
+        #lefts.append(1)
+        #rights.append(span0[0]-1)
 
         #s0-span
         lefts.append(span0[0])
@@ -35,10 +35,10 @@ class Segmenter(object):
         # s1-span
         lefts.append(span1[0])
         rights.append(span1[1])
-        #post-span
 
-        lefts.append(span1[1]+1)
-        rights.append(self.n)
+        #post-span
+        #lefts.append(span1[1]+1)
+        #rights.append(self.n)
 
         return tuple(lefts),tuple(rights)
     
@@ -47,26 +47,26 @@ class Segmenter(object):
         np_indexs = self.cur_layer.np_indexs()
         self.labels = ['AP' for i in range(self.n)]
         for index in np_indexs:
-            labels[index-1] = 'NA'
+            self.labels[index-1] = 'NA'
 
         return SegSentence(
             [('S','NA')] +
-            [(c,l) for (c,l) in zip(self.gold_sentence,self.labels)] +
-            ['\S','NA']
+            [(c,pred_l) for ((c,gold_l),pred_l) in zip(self.gold_sentence,self.labels)] +
+            [('/S','NA')]
         )
 
     @staticmethod
-    def exploration(data,fm,network,drop_prob):
+    def exploration(data,fm,network,drop_prob,unk_params):
         dynet.renew_cg()
         network.prep_params()
-
-        label_data = {}
 
         segSentence = data['segSentence']
 
         n = segSentence.n0
         state = Segmenter(n,segSentence)
         state.seg_sentence = [c for (c, l) in segSentence.sentence[1:-1]]
+
+        state.prep_layer()
 
         ### Random UNK
         for (i,uni) in enumerate(data['unigrams']):
@@ -97,8 +97,8 @@ class Segmenter(object):
         state_cnt = 0
         for step in range(n):
             ap_scores = []
-
-            for i in range(1,len(state.cur_layer)+1):
+            ap_value = []
+            for i in range(len(state.cur_layer)-1):
                 span0 = state.cur_layer[i]
                 span1 = state.cur_layer[i + 1]
                 left,right = state.l_features(span0,span1)
@@ -107,20 +107,23 @@ class Segmenter(object):
                     back,
                     left,
                     right,
-                    test=True
+                    test=False,
                 )
+                ap_value.append(scores.npvalue())
                 ap_scores.append(scores)
-            
+
+
             loss1 = state.get_loss_1(ap_scores)
-            loss2 = state.get_loss_2(ap_scores)
+            #loss2 = state.get_loss_2(ap_scores)
 
             errors.extend(loss1)
-            errors.extend(loss2)
+            #errors.extend(loss2)
 
             state_cnt += 1
 
-            if loss2 == []:
+            if not state.select_combine(ap_scores):
                 break
+
         
         predicted = state.wrap_result()
         accuracy = predicted.compare(segSentence)
@@ -130,55 +133,63 @@ class Segmenter(object):
             'loss':errors,
         }
 
-        return result,accuracy
+        return errors,accuracy
 
 
     def l_oracle(self):
         return self.gold_sentence[self.i][1]
  
+    def label_index(self,label):
+        if label == 'AP':
+            return 0
+        elif label == 'NA':
+            return 1
 
+    def get_loss_1(self,scores):
 
-    def get_loss_1(self,scores)
+        assert(len(scores) == len(self.cur_layer) - 1)
 
-        assert(len(scores) == len(self.cur_layer))
-
-        error = []
-        for i in range(len(self.cur_layer) - 1):
+        errors = []
+        #values = [s.npvalue() for s in scores]
+        for i in range(len(self.cur_layer)-1):
             span0 = self.cur_layer[i]
             span1 = self.cur_layer[i+1]
             index = span1[0]
             probs = dynet.softmax(scores[i])
-            
-            correct = self.l_action_index(self.gold_sentence[index][1])
-            loss = - dynet.log(dynet.pick(probs,correct))
+
+            #probs_value = probs.npvalue()
+            correct = self.label_index(self.gold_sentence[index-1][1])
+            loss =  -dynet.log(dynet.pick(probs,correct))
             errors.append(loss)
 
         return errors
 
-    def get_loss_2(self,scores)
+    def get_loss_2(self,scores):
         
-        assert(len(scores) == len(self.cur_layer))
+        assert(len(scores) == len(self.cur_layer) -1 )
 
         errors = []
         _,combine_scores = self.select_position(scores)
-        if combine_scores is not [] :
-            probs = dynet.softmax(combine_scores)
-            index = np.argmax(combine_scores.npvalue)
+        if len(combine_scores) != 0 :
+            probs = dynet.softmax(dynet.concatenate(combine_scores))
+            values = [v.npvalue() for v in combine_scores]
+            index = np.argmax(values)
             length = len(combine_scores)
-            loss = -dynet.log(length*np.pick(probs,index) - dynet.sum(probs))
+            loss = -dynet.log(dynet.scalarInput(length)*dynet.pick(probs,index) - dynet.sum_cols(dynet.transpose(probs)))
             errors.append(loss)
 
         return errors
 
     def select_position(self,scores):
         
-        assert(len(scores) = len(self.cur_layer))
+        assert(len(scores) == len(self.cur_layer) - 1)
         pos = []
         combine_scores = []
-        for i in range(len(scores)):
-            if scores[i][0] > scores[i][1]:
+        values = [ s.npvalue() for s in scores]
+        for i in range(len(values)):
+            if values[i][0] >= values[i][1]:
                 pos.append(self.cur_layer.layer[i][1] + 1)
-                combine_scores.append(scores[i][0])
+                combine_scores.append(values[i][0])
 
         return pos,combine_scores
 
@@ -187,12 +198,17 @@ class Segmenter(object):
 
     def select_combine(self,scores):
         combine_indexs,scores = self.select_position(scores)
-        if pos is not [] :
-            index = np.argmax(scores)
-            self.combine(index)
+        if len(scores) != 0 :
+            values = scores
+            index = np.argmax(values)
+            self.combine(combine_indexs[index])
             return True
         else:
             return False
+
+
+    def prep_layer(self):
+        self.cur_layer = Layer(self.gold_sentence)
 
     @staticmethod
     def segment(seg_sentence,fm,network):
@@ -202,9 +218,11 @@ class Segmenter(object):
         n = seg_sentence.n0
         state = Segmenter(n,seg_sentence)
 
+        fwd_b,u = fm.sentence_sequence(seg_sentence)
+
         fwd,back = network.evaluate_recurrent(fwd_b,u,test=True)
 
-        state.cur_layer = state.prep_layer()
+        state.prep_layer()
         for step in range(n):
             ap_scores = []
 
@@ -218,13 +236,13 @@ class Segmenter(object):
                     left,
                     right,
                     test=True
-                ).npvalue()
+                )
                 ap_scores.append(scores)
             
             if not state.select_combine(ap_scores):
                 break
 
-        predicted = self.wrap_result()
+        predicted = state.wrap_result()
         return predicted    
 
     @staticmethod
@@ -260,7 +278,7 @@ class Segmenter(object):
 
         
 class Layer(object):
-    def __init__(self,gold_sentence)
+    def __init__(self,gold_sentence):
         self.layer = [(i+1,i+1) for i in range(len(gold_sentence)) ]
         self.sentence = gold_sentence
 
@@ -269,17 +287,28 @@ class Layer(object):
 
     def combine(self,pos):
         layer = []
-        for i in range(len(self.layer)):
+        i = 0
+        while i < len(self.layer):
             if self.layer[i][1] + 1 != pos:
                 layer.append(self.layer[i])
+                i += 1
             else:
                 span0 = self.layer[i]
                 span1 = self.layer[i+1]
                 layer.append((span0[0],span1[1]))
-                i += 1
+                i += 2
         self.layer = layer
 
-    def wrap_result(self):
+    def np_indexs(self):
+
+        result= []
+        for span in self.layer:
+            result.append(span[0])
+
+        return result
+
+    def __getitem__(self, item):
+        return self.layer[item]
 
 
 
