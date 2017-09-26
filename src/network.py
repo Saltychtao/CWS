@@ -418,14 +418,16 @@ class Network(object):
             for b in xrange(num_batched):
                 batch = training_data[(b * batch_size) : (b + 1) * batch_size]
 
-                error = []
+                dynet.renew_cg()
+                #error = []
                 for example in batch:
 
                     loss,acc = Segmenter.exploration(example,fm,network,droprate,unk_params)
                     #loss = result['loss']
                     #total_states += result['state_cnt']
                     training_acc += acc
-                    error.extend(loss)
+                    #error.extend(loss)
+
 
                     if len(loss) == 0:
                         continue

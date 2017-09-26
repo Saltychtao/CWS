@@ -25,8 +25,8 @@ class Segmenter(object):
         rights = []
 
         #pre-s1-span
-        #lefts.append(1)
-        #rights.append(span0[0]-1)
+        lefts.append(1)
+        rights.append(span0[0]-1)
 
         #s0-span
         lefts.append(span0[0])
@@ -37,8 +37,8 @@ class Segmenter(object):
         rights.append(span1[1])
 
         #post-span
-        #lefts.append(span1[1]+1)
-        #rights.append(self.n)
+        lefts.append(span1[1]+1)
+        rights.append(self.n)
 
         return tuple(lefts),tuple(rights)
     
@@ -114,10 +114,10 @@ class Segmenter(object):
 
 
             loss1 = state.get_loss_1(ap_scores)
-            #loss2 = state.get_loss_2(ap_scores)
+            loss2 = state.get_loss_2(ap_scores)
 
             errors.extend(loss1)
-            #errors.extend(loss2)
+            errors.extend(loss2)
 
             state_cnt += 1
 
@@ -132,7 +132,8 @@ class Segmenter(object):
             'state_cnt':state_cnt,
             'loss':errors,
         }
-
+        #if len(errors) == 0:
+        #    return dynet.scalarInput(0),accuracy
         return errors,accuracy
 
 
@@ -169,16 +170,31 @@ class Segmenter(object):
         assert(len(scores) == len(self.cur_layer) -1 )
 
         errors = []
-        _,combine_scores = self.select_position(scores)
-        if len(combine_scores) != 0 :
-            probs = dynet.softmax(dynet.concatenate(combine_scores))
-            values = [v.npvalue() for v in combine_scores]
-            index = np.argmax(values)
-            length = len(combine_scores)
-            loss = -dynet.log(dynet.scalarInput(length)*dynet.pick(probs,index) - dynet.sum_cols(dynet.transpose(probs)))
-            errors.append(loss)
+        pos,combine_scores = self.select_position(scores)
 
-        return errors
+
+        if len(pos) == 0:
+            return errors
+        else:
+            probs = dynet.softmax(dynet.concatenate(combine_scores))
+            candidates = self.check_oracle(pos)
+            ap_values = [s.value() for s in combine_scores]
+            if len(candidates) == 0 :
+                index = np.argmin(ap_values)
+                loss = -dynet.log(dynet.pick(probs,index))
+                errors.append(loss)
+            else:
+                index = pos.index(candidates[0])
+                loss = - dynet.log(dynet.pick(probs,index))
+                errors.append(loss)
+            return errors
+
+    def check_oracle(self,pos):
+        candidates = []
+        for p in pos:
+            if self.gold_sentence[p-1][1] == 'AP':
+                candidates.append(p)
+        return candidates
 
     def select_position(self,scores):
         
@@ -189,7 +205,7 @@ class Segmenter(object):
         for i in range(len(values)):
             if values[i][0] >= values[i][1]:
                 pos.append(self.cur_layer.layer[i][1] + 1)
-                combine_scores.append(values[i][0])
+                combine_scores.append(scores[i][0])
 
         return pos,combine_scores
 
@@ -197,15 +213,14 @@ class Segmenter(object):
         self.cur_layer.combine(pos)
 
     def select_combine(self,scores):
-        combine_indexs,scores = self.select_position(scores)
-        if len(scores) != 0 :
-            values = scores
+        pos,combine_scores = self.select_position(scores)
+        if len(combine_scores) != 0 :
+            values = [s.value for s in combine_scores]
             index = np.argmax(values)
-            self.combine(combine_indexs[index])
+            self.combine(pos[index])
             return True
         else:
             return False
-
 
     def prep_layer(self):
         self.cur_layer = Layer(self.gold_sentence)
