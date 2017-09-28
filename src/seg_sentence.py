@@ -113,6 +113,53 @@ class SegSentence(object):
         return FScore(correct=n_right_words,predcount=pred_counts,goldcount=gold_counts)
 
 
+class PosSentence(object):
+    def __init__(self, sentence):
+        self.sentence = sentence
+        self.n0 = len(sentence) - 2
+        self.n = len(sentence)
+
+    def words(self):
+        self.words = []
+        for (w, l) in self.sentence:
+            self.words.append(w)
+
+        return self.words
+
+    @staticmethod
+    def sentence_begin():
+        return ('S', 'S')
+
+    @staticmethod
+    def sentence_end():
+        return ('\S', '\S')
+
+    @staticmethod
+    def load_sentence_file(fname):
+        sentences = []
+        sentence = [PosSentence.sentence_begin()]
+        word = ''
+        tag = ''
+        with open(fname, 'r') as f:
+            while f is not None:
+                line = f.readline()
+                if line == '':
+                    break
+                elif line == '\n':
+                    sentence.append(PosSentence.sentence_end())
+                    sentences.append(sentence)
+                    sentence = [PosSentence.sentence_end()]
+
+                else:
+                    strs = line.split()
+                    if len(strs) == 3:
+                        sentence.append((word, tag))
+                        word = strs[0]
+                        tag = strs[1]
+                    else:
+                        word += strs[0]
+        return sentences
+
 
 
 class FScore(object):

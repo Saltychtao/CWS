@@ -17,7 +17,7 @@ Vocabulary may be loaded every time from a training sentence file, or it may be 
 
 Trainging requires a file containing training sentences (`--train`) and a file containing validation sentence (`--dev`), which are parsed four times per training epoch to determine which model to keep. A file name must also be provided to store the saved model (`--model`). The following is an example of a command to train a model with all of the default settings:
 ```
-    python src/main.py --train data/ctb/ctb.train.seg.append --dynet-mem 2000 --dev data/ctb/ctb.dev.seg.append --vocab data/vocab.json --model data/my_model --epoch 3
+    python src/main.py --train data/ctb/ctb.train.seg.append --dynet-mem 6000 --dev data/ctb/ctb.dev.seg.append --vocab data/vocab.json --model data/my_model --epoch 10
 ```
 
 The following table provides an overview of additional training options:
@@ -43,5 +43,5 @@ Argument | Description | Default
 There is also a facility to directly evaluate a model agaist a reference corpus, by supplying the `--test` argument:
 
 ```
-python src/main.py --test data/ctb/ctb.test.seg.append --vocab data/vocab.json --model data/my_model2
+python src/main.py --dynet-mem 4000 --test data/ctb/ctb.test.seg.append --vocab data/vocab.json --model data/my_model
 ```
