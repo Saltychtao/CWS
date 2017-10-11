@@ -1,7 +1,8 @@
 import numpy as np
 
 import json
-from seg_sentence import SegSentence
+from seg_sentence import SegSentence,Sentence,PosSentence
+
 from Segmenter import Segmenter
 
 from collections import defaultdict,OrderedDict
@@ -12,13 +13,14 @@ class Corpus(object):
     STOP = '</s>'
 
     @staticmethod
-    def vocab_init(fname,verbose = True):
+    def vocab_init(fname):
+
+
+        sentences = Sentence.load_sentence_file(fname)
 
         unigrams_freq = defaultdict(int)
         bigrams_freq = defaultdict(int)
         label_freq = defaultdict(int)
-
-        sentences = SegSentence.load_sentence_file(fname)
         for i,sentence in enumerate(sentences):
             pre_unigram = Corpus.START
             for (unigram,label) in sentence:
@@ -29,7 +31,7 @@ class Corpus(object):
                 label_freq[label] += 1
             bigrams_freq[pre_unigram+Corpus.STOP] += 1
             bigrams_freq[Corpus.STOP+pre_unigram] += 1
-        
+
         bigrams = [Corpus.UNK] + sorted(bigrams_freq)
         unigrams = [
             Corpus.START,
@@ -42,6 +44,19 @@ class Corpus(object):
 
         labels = sorted(label_freq)
         ldict = OrderedDict((l,i) for (i,l) in enumerate(labels))
+        # if mode is not 'seg':
+        #     words_freq= defaultdict(int)
+        #     tag_freq = defaultdict(int)
+        #     for s in sentences:
+        #         for (w,t) in s:
+        #             words_freq[w] += 1
+        #             tag_freq[t] += 1
+        #
+        #         words = [Corpus.UNK,Corpus.START,Corpus.STOP] + sorted(words_freq)
+        #         tags = sorted(label_freq)
+        #
+        #         wdict = OrderedDict((w,i) for (i,w) in enumerate(words))
+        #         tdict = OrderedDict((t,i) for (i,t) in enumerate(tags))
 
         return {
             'origin_sentences':sentences,
@@ -80,6 +95,8 @@ class Corpus(object):
                     self.unigrams_freq_list.append(self.unigrams_freq[word])
                 else:
                     self.unigrams_freq_list.append(0)
+
+
     @staticmethod
     def from_dict(data):
         new = Corpus(None)
@@ -90,6 +107,7 @@ class Corpus(object):
         new.unigrams = data['unigrams']
         new.bigrams_freq_list = data['bigrams_freq_list']
         new.unigrams_freq_list = data['unigrams_freq_list']
+
         return new
 
     def as_dict(self):
@@ -101,6 +119,7 @@ class Corpus(object):
         'unigrams':self.unigrams,
         'bigrams_freq_list':self.bigrams_freq_list,
         'unigrams_freq_list':self.unigrams_freq_list,
+
     }
 
     def save_json(self,filename):
@@ -162,20 +181,140 @@ class Corpus(object):
         
     def gold_data_from_file(self,fname):
 
-        sentences = SegSentence.load_sentence_file(fname)
+        sentences = Sentence.load_sentence_file(fname,'seg')
         result = []
         for sentence in sentences:
             sentence_data = self.gold_data(sentence)
             result.append(sentence_data)
         return result
 
+class PosCorpus(object):
+    UNK= '<UNK>'
+    START = '<S>'
+    STOP  = '</S>'
 
+    @staticmethod
+    def vocab_init(fname):
 
-    
+        sentences = Sentence.load_sentence_file(fname,'pos-tagging')
 
+        words_freq = defaultdict(int)
+        tag_freq = defaultdict(int)
 
+        for s in sentences:
+            sentence = PosSentence.ct2wt(s)
+            for (w,t) in sentence:
+                words_freq[w] += 1
+                tag_freq[t] += 1
 
+        words =  [PosCorpus.UNK] + sorted(words_freq)
+        wdict = OrderedDict((w,i) for (i,w) in enumerate(words))
 
+        tag_freq.pop('<S>')
+        tag_freq.pop('</S>')
+        tags = sorted(tag_freq)
+        tdict = OrderedDict((t,i) for (i,t) in enumerate(tags))
 
-    
-            
+        return {
+            'origin_sentences':sentences,
+            'wdict':wdict,
+            'words':words,
+            'words_freq':words_freq,
+            'tdict':tdict,
+            'tags':tags,
+            'tag_freq':tag_freq
+        }
+
+    def __init__(self,vocabfile):
+        if vocabfile is not None:
+            data = PosCorpus.vocab_init(vocabfile)
+
+            self.origin_sentences = data['origin_sentences']
+            self.wdict = data['wdict']
+            self.tdict = data['tdict']
+            self.words = data['words']
+            self.tags = data['tags']
+            self.words_freq = data['words_freq']
+
+            self.words_freq_list = []
+            for w in self.wdict.keys():
+                if w in self.words_freq:
+                    self.words_freq_list.append(self.words_freq[w])
+                else:
+                    self.words_freq_list.append(0)
+
+    @staticmethod
+    def from_dict(data):
+        new = PosCorpus(None)
+        new.wdict = data['wdict']
+        new.tdict = data['tdict']
+        new.words = data['words']
+        new.tags = data['tags']
+        new.words_freq_list = data['words_freq_list']
+
+        return new
+
+    def as_dict(self):
+        return{
+            'wdict':self.wdict,
+            'tdict':self.tdict,
+            'words':self.words,
+            'tags':self.tags,
+            'words_freq_list':self.words_freq_list
+        }
+
+    def save_json(self,filename):
+        with open(filename,'w') as fh:
+            json.dump(self.as_dict(),fh,encoding='utf-8')
+
+    @staticmethod
+    def load_json(filename):
+        with open (filename) as fh:
+            data = json.load(fh,object_pairs_hook=OrderedDict,encoding='utf-8'
+                             )
+        return PosCorpus.from_dict(data)
+
+    def total_words(self):
+        return len(self.wdict)
+
+    def total_tags(self):
+        return len(self.tdict)
+
+    def total_span_nums(self):
+        return 1
+
+    def tag_index(self,action):
+        return self.tdict.get(action)
+
+    def tag_action(self,index):
+        return self.tdict.keys()[index]
+
+    def sentence_sequence(self,pos_sentence):
+        words = pos_sentence.words
+        words_id = [
+            self.wdict[w.decode('utf-8')]
+            if w.decode('utf-8') in self.wdict else self.wdict[PosCorpus.UNK]
+            for w in words
+        ]
+
+        fwd_w = np.array(words_id).astype('int32')
+
+        return fwd_w
+
+    def gold_data(self,sentence):
+        pos_sentence = PosSentence(sentence)
+        words = self.sentence_sequence(pos_sentence)
+
+        return {
+            'posSentence':pos_sentence,
+            'words':words
+        }
+
+    def gold_data_from_file(self,fname):
+
+        sentences = Sentence.load_sentence_file(fname,'pos-tagging')
+        result = []
+        for sentence in sentences:
+            sentence_data = self.gold_data(sentence)
+            result.append(sentence_data)
+        return result

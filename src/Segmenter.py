@@ -8,12 +8,12 @@ from seg_sentence import FScore
 
 class Segmenter(object):
     def __init__(self,n,seg_sentence):
-        self.todo = 0
-        self.stack = []
-        self.n = n
-        self.i = 0
-        self.labels = []
-        self.gold_sentence = seg_sentence.sentence[1:-1]
+         self.todo = 0
+         self.stack = []
+         self.n = n
+         self.i = 0
+         self.labels = []
+         self.gold_sentence = seg_sentence.sentence[1:-1]
 
     def s_features(self):
         """

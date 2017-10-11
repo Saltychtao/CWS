@@ -24,47 +24,47 @@ class SegSentence(object):
             self.unigram.append(self.sentence[i][0])
         return self.unigram
     
-    @staticmethod
-    def load_sentence_file(fname,mode = "Append"):
-        sentences = []
-        sentence = [SegSentence.sentence_begin(mode)]
-        with open(fname) as f:
-            while f is not None:
-                line = f.readline()
-                if line == '':
-                    break
-                if line  == '\n':
-                    sentence.append(
-                        SegSentence.sentence_end(mode)
-                    )
-                    sentences.append(sentence)
-                    sentence = [SegSentence.sentence_begin(mode)]
+    # @staticmethod
+    # def load_sentence_file(fname,mode = "Append"):
+    #     sentences = []
+    #     sentence = [SegSentence.sentence_begin(mode)]
+    #     with open(fname) as f:
+    #         while f is not None:
+    #             line = f.readline()
+    #             if line == '':
+    #                 break
+    #             if line  == '\n':
+    #                 sentence.append(
+    #                     SegSentence.sentence_end(mode)
+    #                 )
+    #                 sentences.append(sentence)
+    #                 sentence = [SegSentence.sentence_begin(mode)]
+    #
+    #             else :
+    #                 character_label = line.split('\t')
+    #                 character = character_label[0]
+    #                 label = character_label[1].split('\n')[0]
+    #                 sentence.append(
+    #                     (character,label)
+    #                 )
+    #     # f.close()
+    #     return sentences
 
-                else :
-                    character_label = line.split('\t')
-                    character = character_label[0]
-                    label = character_label[1].split('\n')[0]
-                    sentence.append(
-                        (character,label)
-                    )
-        # f.close()
-        return sentences
+    # @staticmethod
+    # def sentence_begin(mode='Append'):
+    #     if mode == 'BMSE':
+    #         return ('<S>','S')
+    #     elif mode == 'Append':
+    #         return ('<S>','NA')
 
-    @staticmethod
-    def sentence_begin(mode):
-        if mode == 'BMSE':
-            return ('<S>','S')
-        elif mode == 'Append':
-            return ('<S>','NA')
+    # @staticmethod
+    # def sentence_end(mode='Append'):
+    #     if mode == 'BMSE':
+    #         return ('</S>','S')
+    #     elif mode == "Append":
+    #         return ('</S>','NA')
 
-    @staticmethod
-    def sentence_end(mode):
-        if mode == 'BMSE':
-            return ('</S>','S')
-        elif mode == "Append":
-            return ('</S>','NA')
-
-    def pretty(self):
+    def __str__(self):
         str = ''
         for i in range(1,self.n0+1):
             if self.sentence[i][1] == 'NA':
@@ -72,7 +72,9 @@ class SegSentence(object):
             elif self.sentence[i][1] == 'AP':
                 str += self.sentence[i][0]
 
+        self._str = str
         return str
+
     def get_spans(self):
 
         result = set()
@@ -111,6 +113,145 @@ class SegSentence(object):
                 n_right_words += 1
 
         return FScore(correct=n_right_words,predcount=pred_counts,goldcount=gold_counts)
+
+
+class PosSentence(object):
+    def __init__(self,sentence):
+        self.sentence = self.ct2wt(sentence)
+        self.n = len(self.sentence)
+        self.n0 = self.n-2
+        self.words = self.get_words()
+        self.tags = self.get_tags()
+
+    @staticmethod
+    def ct2wt(sentence):
+        wt_list = []
+        word = sentence[0][0]
+        tag = sentence[0][1]
+        for (c,t) in sentence[1:]:
+            if t == 'NotStart':
+                word += c
+            else:
+                wt_list.append((word,tag))
+                word = c
+                tag = t
+        wt_list.append((word,tag))
+        return wt_list
+
+    def get_words(self):
+        self.words = []
+        for (w,_) in self.sentence:
+            self.words.append(w)
+        return self.words
+
+    def get_tags(self):
+        self.tags = []
+        for (_,t) in self.sentence:
+            self.tags.append(t)
+        return self.tags
+
+    def pretty(self):
+        s = ''
+        for (w,t) in self.sentence:
+            s += '(' + w + ' ' + t + ')'
+        return s
+
+    def compare(self,other):
+        lenA = len(self.tags)
+        lenB = len(other.tags)
+        assert (lenA == lenB)
+        correct_cnt = 0
+        for (t1,t2) in zip(self.tags,other.tags):
+            if t1 == t2:
+                correct_cnt += 1
+
+        return Accuracy(correct_cnt,lenA)
+
+class Accuracy(object):
+    def __init__(self,correct = 0,count = 0):
+        self.correct = correct
+        self.count = count
+
+    def precision(self):
+        if self.count > 0:
+            return (100.0*self.correct) / self.count
+        else:
+            return 0
+
+    def __str__(self):
+        precision = self.precision()
+        return '(Accuracy = {:0.2f})'.format(precision)
+
+    def __iadd__(self,other):
+        self.correct += other.correct
+        self.count += other.count
+        return self
+
+    def __cmp__(self,other):
+        return cmp(self.precision(),other.precision())
+
+    def __add__(self,other):
+        return Accuracy(self.correct + other.correct,
+                        self.count + other.count)
+class Sentence(object):
+    def __init__(self,sentence):
+        self.sentence = sentence
+        self.n = len(sentence)
+        self.n0 = self.n - 2
+        self.seg_sentence = SegSentence([(c,l) for (c,_,l) in sentence])
+        self.pos_sentence = PosSentence([(c,t) for (c,t,_) in sentence])
+
+
+
+    @staticmethod
+    def sentence_begin():
+        return ('<S>','<S>','NA')
+
+    @staticmethod
+    def sentence_end():
+        return ('</S>','</S>','NA')
+
+    @staticmethod
+    def load_sentence_file(fname, mode):
+        sentences = []
+        sentence = [Sentence.sentence_begin()]
+        with open(fname) as f:
+            while f is not None:
+                line = f.readline()
+                if line == '':
+                    break
+                if line == '\n':
+                    sentence.append(
+                        Sentence.sentence_end()
+                    )
+                    sentences.append(sentence)
+                    sentence = [Sentence.sentence_begin()]
+
+                else:
+                    ctl_strs = line.split()
+                    c = ctl_strs[0]
+                    t = ctl_strs[1]
+                    l = ctl_strs[2]
+                    sentence.append(
+                        (c,t,l)
+                    )
+        sentence.append(Sentence.sentence_end())
+        sentences.append(sentence)
+        result = []
+        if mode == 'seg':
+            for s in sentence:
+                result.append(
+                    [(c,l) for (c,t,l) in s]
+                )
+        elif mode == 'pos-tagging':
+            for s in sentences:
+                result.append(
+                    [(c,t) for (c,t,l) in s]
+                )
+        elif mode == 's&p':
+            result = sentences
+
+        return result
 
 
 

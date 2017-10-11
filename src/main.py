@@ -1,13 +1,13 @@
 
+
 import sys
 import argparse
 
-from seg_sentence import SegSentence
-from Segmenter import Segmenter
+from seg_sentence import Sentence
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(prog='Chinese Segmenter')
+    parser = argparse.ArgumentParser(prog='Chinese Word Segmenter')
     parser.add_argument(
         '--dynet-mem',
         dest='dynet_mem',
@@ -76,19 +76,24 @@ if __name__ == '__main__':
         default=50
     )
     parser.add_argument(
+        '--word-dims',
+        dest='word_dims',
+        type=int,
+        default=50,
+    )
+    parser.add_argument(
         '--lstm-units',
         dest='lstm_units',
         type = int,
-        default=200,
+        default=100,
         help='Number of LSTM units in each layer/direction. (DEFAULT=200)'
     )
     parser.add_argument(
         '--hidden-units',
         dest='hidden_units',
         type = int,
-        default = 50,
+        default = 100,
         help='Number of hidden units. (DEFAULT=50)'
-
     )
     parser.add_argument(
         '--epochs',
@@ -102,7 +107,7 @@ if __name__ == '__main__':
         dest='batch_size',
         type = int ,
         default = 10,
-        help='Number of sentences per training update. (DEFAULT=10'
+        help='Number of sentences per training updatexte. (DEFAULT=10'
     )
     parser.add_argument(
         '--droprate',
@@ -126,7 +131,7 @@ if __name__ == '__main__':
         '--alpha',
         type=float,
         dest='alpha',
-        default=1.0
+        default=0.0
     )
     parser.add_argument(
         '--beta',
@@ -135,6 +140,12 @@ if __name__ == '__main__':
         default=0
     )
 
+    parser.add_argument(
+        '--mode',
+        type = str,
+        dest = 'mode',
+        help= 'Use one of \'cws\' , \'pos-taggin\' , \'joint\''
+    )
     args = parser.parse_args()
 
     # Overriding DyNet defaults
@@ -145,16 +156,34 @@ if __name__ == '__main__':
     sys.argv.insert(1,str(args.dynet_seed))
     sys.argv.insert(1,'--dynet-seed')
 
+    if (args.mode is None ) :
+        print('Must specify --mode parameter.')
+        print('    (Use -h or --help flag for full option list.')
+
+    if not (args.mode  in ['cws','POS-tagging','joint']):
+        print('--mode parameter must be either ')
+
     if args.vocab is not None:
-        from Corpus import Corpus
-        fm = Corpus.load_json(args.vocab)
+        if args.mode == 'CWS':
+            from Corpus import Corpus
+            fm = Corpus.load_json(args.vocab)
+        elif args.mode == 'POS-tagging':
+            from Corpus import PosCorpus
+            fm = PosCorpus.load_json(args.vocab)
+
     elif args.train is not None:
-        from  Corpus import Corpus
-        fm = Corpus(args.train)
-        if args.vocab_output is not None:
-            fm.save_json(args.vocab_output)
-            print('Wrote vocabulary file {}'.format(args.vocab_output))
-            sys.exit()
+        fm = None
+        if args.mode == 'CWS':
+            from  Corpus import Corpus
+            fm = Corpus(args.train)
+        elif args.mode == 'POS-tagging':
+            from Corpus import PosCorpus
+            fm = PosCorpus(args.train)
+
+            if args.vocab_output is not None:
+                fm.save_json(args.vocab_output)
+                print('Wrote vocabulary file {}'.format(args.vocab_output))
+                sys.exit()
     else:
         print('Must specify either --vocab_file or --traing-data.')
         print('    (Use -h or --help flag for full option list.)')
@@ -165,39 +194,65 @@ if __name__ == '__main__':
         print('    (Use -h or --help flag for full option list.)')
         sys.exit()
 
-    if args.test is not None:
-        from seg_sentence import SegSentence
-        from network import Network
-        from Segmenter import Segmenter
 
-        test_sentence = SegSentence.load_sentence_file(args.test)
+
+    if args.test is not None:
+        test_sentence = Sentence.load_sentence_file(args.test,args.mode)
         print('Loaded test trees from {}'.format(args.test))
-        network = Network.load(args.model)
-        print('Loaded model from: {}'.format(args.model))
-        accuracy = Segmenter.evaluate_corpus(test_sentence,fm,network)
-        #Segmenter.write_predicted('data/predicted',test_sentence,fm,network)
-        print('Accuracy: {}'.format(accuracy))
+        if args.mode == 'cws':
+            from network import Network
+            from Segmenter import Segmenter
+            network = Network.load(args.model)
+            print('Loaded CWS model from: {}'.format(args.model))
+            fscore = Segmenter.evaluate_corpus(test_sentence,fm,network)
+            #Segmenter.write_predicted('data/predicted',test_sentence,fm,network)
+            print('F-Score : {}'.format(fscore))
+
+        elif args.mode == 'POS-tagging':
+            from tagger_network import Network
+            from Tagger import Tagger
+            network = Network.load(args.model)
+            print('Loaded POS-tagging model from: {}'.format(args.model))
+            accuracy = Tagger.evaluate_corpus(test_sentence,fm,network)
+            print('Accuracy : {}'.format(accuracy))
 
     elif args.train is not None:
-        from network import Network
+
+
         if args.np_seed is not None:
             import numpy as np
             np.random.seed(args.np_seed)
-
-
-        network = Network.train(
-            corpus = fm,
-            bigrams_dims = args.bigrams_dims,
-            unigrams_dims = args.unigrams_dims,
-            lstm_units = args.lstm_units,
-            hidden_units = args.hidden_units,
-            epochs = args.epochs,
-            batch_size = args.batch_size,
-            train_data_file = args.train,
-            dev_data_file = args.dev,
-            model_save_file = args.model,
-            droprate=args.droprate,
-            unk_params=args.unk_param,
-            alpha=args.alpha,
-            beta=args.beta
-        )
+        if args.mode == 'CWS':
+            from network import Network
+            network = Network.train(
+                corpus = fm,
+                bigrams_dims = args.bigrams_dims,
+                unigrams_dims = args.unigrams_dims,
+                lstm_units = args.lstm_units,
+                hidden_units = args.hidden_units,
+                epochs = args.epochs,
+                batch_size = args.batch_size,
+                train_data_file = args.train,
+                dev_data_file = args.dev,
+                model_save_file = args.model,
+                droprate=args.droprate,
+                unk_params=args.unk_param,
+                alpha=args.alpha,
+                beta=args.beta
+            )
+        elif args.mode == 'POS-tagging':
+            from tagger_network import Network
+            Network.train(
+                corpus=fm,
+                words_dims=args.word_dims,
+                lstm_units=args.lstm_units,
+                hidden_units=args.hidden_units,
+                epochs=args.epochs,
+                batch_size=args.batch_size,
+                train_data_file=args.train,
+                dev_data_file=args.dev,
+                model_save_file=args.model,
+                droprate=args.droprate,
+                unk_params=args.unk_param,
+                alpha=args.alpha
+            )

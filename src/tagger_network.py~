@@ -521,7 +521,7 @@ class Network(object):
             total_states = 0
             training_acc = FScore()
 
-            #np.random.shuffle(training_data)
+            np.random.shuffle(training_data)
 
             for b in xrange(num_batched):
                 batch = training_data[(b * batch_size) : (b + 1) * batch_size]
