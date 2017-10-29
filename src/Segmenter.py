@@ -57,7 +57,7 @@ class Segmenter(object):
 
     @staticmethod
     def exploration(data,fm,network,drop_prob,unk_params):
-        dynet.renew_cg()
+        # dynet.renew_cg()
         network.prep_params()
 
         segSentence = data['segSentence']
@@ -90,26 +90,24 @@ class Segmenter(object):
                 data['fwd_bigrams'][i] = 0
         
         fwd_bigrams = data['fwd_bigrams']
-        unigrams = data['unigrams']        
-        fwd,back = network.evaluate_recurrent(fwd_bigrams,unigrams,test=False)
+        unigrams = data['unigrams']
+        network.evaluate_recurrent(fwd_bigrams, unigrams, test=False)
 
         errors = []
         state_cnt = 0
         for step in range(n):
             ap_scores = []
-            ap_value = []
+            # ap_value = []
             for i in range(len(state.cur_layer)-1):
-                span0 = state.cur_layer[i]
-                span1 = state.cur_layer[i + 1]
-                left,right = state.l_features(span0,span1)
+                left_span = state.cur_layer[i]
+                right_span = state.cur_layer[i + 1]
+                #left,right = state.l_features(span0,span1)
                 scores = network.evaluate_labels(
-                    fwd,
-                    back,
-                    left,
-                    right,
+                    left_span,
+                    right_span,
                     test=False,
                 )
-                ap_value.append(scores.npvalue())
+                #ap_value.append(scores.npvalue())
                 ap_scores.append(scores)
 
 
@@ -121,9 +119,12 @@ class Segmenter(object):
 
             state_cnt += 1
 
-            if not state.select_combine(ap_scores):
+            combined_spans = state.select_combine(ap_scores)
+            if combined_spans is None:
                 break
-
+            else:
+                left, right = combined_spans
+                network.update_encoding(left, right)
         
         predicted = state.wrap_result()
         accuracy = predicted.compare(segSentence)
@@ -151,19 +152,26 @@ class Segmenter(object):
         assert(len(scores) == len(self.cur_layer) - 1)
 
         errors = []
-        #values = [s.npvalue() for s in scores]
+        values = [s.npvalue() for s in scores]
         for i in range(len(self.cur_layer)-1):
             span0 = self.cur_layer[i]
             span1 = self.cur_layer[i+1]
             index = span1[0]
             probs = dynet.softmax(scores[i])
+            #print(probs.value())
 
             #probs_value = probs.npvalue()
             correct = self.label_index(self.gold_sentence[index-1][1])
-            loss =  -dynet.log(dynet.pick(probs,correct))
+            tmp = dynet.pick(probs, correct)
+            # print(tmp.value())
+            if abs(tmp.value()) < 1e-50:
+                continue
+            loss = -dynet.log(tmp)
+            #loss =  -dynet.log(dynet.pick(probs,correct))
             errors.append(loss)
 
         return errors
+
 
     def get_loss_2(self,scores):
         
@@ -181,18 +189,23 @@ class Segmenter(object):
             ap_values = [s.value() for s in combine_scores]
             if len(candidates) == 0 :
                 index = np.argmin(ap_values)
-                loss = -dynet.log(dynet.pick(probs,index))
-                errors.append(loss)
+                tmp = dynet.pick(probs, index)
+                if abs(tmp.value()) > 1e-50:
+                    loss = - dynet.log(tmp)
+                    errors.append(loss)
             else:
                 index = pos.index(candidates[0])
-                loss = - dynet.log(dynet.pick(probs,index))
-                errors.append(loss)
+                tmp = dynet.pick(probs, index)
+                if abs(tmp.value()) > 1e-50:
+                    loss = - dynet.log(tmp)
+                    errors.append(loss)
             return errors
 
     def check_oracle(self,pos):
         candidates = []
         for p in pos:
-            if self.gold_sentence[p-1][1] == 'AP':
+            index = p[1][0]
+            if self.gold_sentence[index - 1][1] == 'AP':
                 candidates.append(p)
         return candidates
 
@@ -204,7 +217,7 @@ class Segmenter(object):
         values = [ s.npvalue() for s in scores]
         for i in range(len(values)):
             if values[i][0] >= values[i][1]:
-                pos.append(self.cur_layer.layer[i][1] + 1)
+                pos.append((self.cur_layer.span[i], self.cur_layer.span[i + 1]))
                 combine_scores.append(scores[i][0])
 
         return pos,combine_scores
@@ -218,9 +231,9 @@ class Segmenter(object):
             values = [s.value for s in combine_scores]
             index = np.argmax(values)
             self.combine(pos[index])
-            return True
+            return pos[index]
         else:
-            return False
+            return None
 
     def prep_layer(self):
         self.cur_layer = Layer(self.gold_sentence)
@@ -235,27 +248,29 @@ class Segmenter(object):
 
         fwd_b,u = fm.sentence_sequence(seg_sentence)
 
-        fwd,back = network.evaluate_recurrent(fwd_b,u,test=True)
+        network.evaluate_recurrent(fwd_b, u, test=True)
 
         state.prep_layer()
         for step in range(n):
             ap_scores = []
 
-            for i in range(0,len(state.cur_layer)-1):
-                span0 = state.cur_layer[i]
-                span1 = state.cur_layer[i + 1]
-                left,right = state.l_features(span0,span1)
+            for i in range(len(state.cur_layer) - 1):
+                left_span = state.cur_layer[i]
+                right_span = state.cur_layer[i + 1]
+                #left,right = state.l_features(span0,span1)
                 scores = network.evaluate_labels(
-                    fwd,
-                    back,
-                    left,
-                    right,
+                    left_span,
+                    right_span,
                     test=True
                 )
                 ap_scores.append(scores)
-            
-            if not state.select_combine(ap_scores):
+
+            combined_spans = state.select_combine(ap_scores)
+            if combined_spans is None:
                 break
+            else:
+                left, right = combined_spans
+                network.update_encoding(left, right)
 
         predicted = state.wrap_result()
         return predicted    
@@ -294,37 +309,44 @@ class Segmenter(object):
         
 class Layer(object):
     def __init__(self,gold_sentence):
-        self.layer = [(i+1,i+1) for i in range(len(gold_sentence)) ]
+        self.span = [(i + 1, i + 1) for i in range(len(gold_sentence))]
         self.sentence = gold_sentence
 
     def __len__(self):
-        return len(self.layer)
+        return len(self.span)
 
     def combine(self,pos):
+        (left_span, right_span) = pos
         layer = []
         i = 0
-        while i < len(self.layer):
-            if self.layer[i][1] + 1 != pos:
-                layer.append(self.layer[i])
-                i += 1
+        while i < len(self.span):
+            if self.span[i][0] == left_span[0] and self.span[i][1] == left_span[1]:
+                layer.append((left_span[0], right_span[1]))
+                i +=2
+
             else:
-                span0 = self.layer[i]
-                span1 = self.layer[i+1]
-                layer.append((span0[0],span1[1]))
-                i += 2
-        self.layer = layer
+                layer.append(self.span[i])
+                i += 1
+        self.span = layer
+        # layer = []
+        # i = 0
+        # while i < len(self.span):
+        #     if self.span[i][1] + 1 != pos:
+        #         layer.append(self.span[i])
+        #         i += 1
+        #     else:
+        #         span0 = self.span[i]
+        #         span1 = self.span[i + 1]
+        #         layer.append((span0[0],span1[1]))
+        #         i += 2
+        # self.span = layer
 
     def np_indexs(self):
 
         result= []
-        for span in self.layer:
+        for span in self.span:
             result.append(span[0])
-
         return result
 
     def __getitem__(self, item):
-        return self.layer[item]
-
-
-
-
+        return self.span[item]

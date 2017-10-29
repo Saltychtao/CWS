@@ -79,7 +79,7 @@ if __name__ == '__main__':
         '--lstm-units',
         dest='lstm_units',
         type = int,
-        default=200,
+        default=50,
         help='Number of LSTM units in each layer/direction. (DEFAULT=200)'
     )
     parser.add_argument(
@@ -94,7 +94,7 @@ if __name__ == '__main__':
         '--epochs',
         dest='epochs',
         type=int,
-        default=1,
+        default=10,
         help='Number of training epochs. (DEFAULT=10)'
     )
     parser.add_argument(

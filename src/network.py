@@ -81,9 +81,10 @@ class LSTM(object):
             self.b_o = dynet.parameter(self.lstm.b_o)
 
         def add_input(self, input_vec):
-
+            # print(input_vec.dim())
             x = dynet.concatenate([input_vec, self.h])
-
+            # print(self.h.dim())
+            #print(self.W_i.dim())
             i = dynet.logistic(self.W_i * x + self.b_i)
             f = dynet.logistic(self.W_f * x + self.b_f)
             g = dynet.tanh(self.W_c * x + self.b_c)
@@ -116,7 +117,8 @@ class Network(object):
             hidden_units,
             label_size,
             span_nums,
-            droprate=0,
+            droprate=0,  # self.embed2lstm_W = dynet.parameter(self.p_embed2lstm_W)
+            # self.embed2lstm_b = dynet.parameter(self.p_embed2lstm_b)
     ):
 
         self.bigrams_size = bigrams_size
@@ -131,6 +133,7 @@ class Network(object):
 
         self.model = dynet.Model()
         self.trainer = dynet.AdadeltaTrainer(self.model, eps=1e-7, rho=0.99)
+        #self.trainer = dynet.AdagradTrainer(self.model)
         random.seed(1)
 
         self.activation = dynet.rectify
@@ -148,10 +151,25 @@ class Network(object):
                               self.lstm_units, self.model)
 
         self.fwd_lstm2 = LSTM(2*self.lstm_units,self.lstm_units,self.model)
-        self.back_lstm2 = LSTM(2*self.lstm_units,self.lstm_units,self.model)
+        self.back_lstm2 = LSTM(2 * self.lstm_units, self.lstm_units, self.model)
+
+        self.upward_lstm = LSTM(2 * self.lstm_units, self.lstm_units, self.model)
+
+        self.p_upward_W = self.model.add_parameters(
+            (self.lstm_units, 2 * self.lstm_units),
+            dynet.UniformInitializer(0.01)
+        )
+
+        self.p_upward_b = self.model.add_parameters(
+            (self.lstm_units),
+            dynet.ConstInitializer(0)
+        )
+
+        #self.update_lstm = LSTM(2*self.lstm_units,self.lstm_units,self.model)
+
 
         self.p_hidden_W = self.model.add_parameters(
-            (self.hidden_units,  2 * self.span_nums  * self.lstm_units),
+            (self.hidden_units, 2 * self.lstm_units),
             dynet.UniformInitializer(0.01)
         )
         self.p_hidden_b = self.model.add_parameters(
@@ -166,14 +184,7 @@ class Network(object):
             (self.label_size,),
             dynet.ConstInitializer(0)
         )
-      #  self.p_embed2lstm_W = self.model.add_parameters(
-      #      (self.lstm_units, self.bigrams_dims + self.unigrams_dims),
-      #      dynet.UniformInitializer(0.01)
-      #  )
-      #  self.p_embed2lstm_b = self.model.add_parameters(
-      #      (self.lstm_units, self.bigrams_dims + self.unigrams_dims),
-      #      dynet.ConstInitializer(0)
-      #  )
+
 
 
     def init_params(self):
@@ -191,15 +202,18 @@ class Network(object):
         self.hidden_b = dynet.parameter(self.p_hidden_b)
         self.output_W = dynet.parameter(self.p_output_W)
         self.output_b = dynet.parameter(self.p_output_b)
-       # self.embed2lstm_W = dynet.parameter(self.p_embed2lstm_W)
-       # self.embed2lstm_b = dynet.parameter(self.p_embed2lstm_b)
+
+        self.upward_W = dynet.parameter(self.p_upward_W)
+        self.upward_b = dynet.parameter(self.p_upward_b)
+        # self.update = self.update_lstm.initial_state()
+        self.encoding = {}
 
     def evaluate_recurrent(self, fwd_bigrams,unigrams, test=False):
         fwd1 = self.fwd_lstm1.initial_state()
         back1 = self.back_lstm1.initial_state()
 
-        fwd2 = self.fwd_lstm2.initial_state()
-        back2 = self.back_lstm2.initial_state()
+        # fwd2 = self.fwd_lstm2.initial_state()
+        #back2 = self.back_lstm2.initial_state()
 
         fwd_input = []
         for i in range(len(unigrams)):
@@ -229,70 +243,107 @@ class Network(object):
             back1_vec = back.output()
             back1_out.append(back1_vec)
 
-        lstm2_input = []
-        for (f,b) in zip(fwd1_out,reversed(back1_out)):
-            lstm2_input.append(dynet.concatenate([f,b]))
-
-        fwd2_out = []
-        for vec in lstm2_input:
-            if self.droprate > 0 and not test:
-                vec = dynet.dropout(vec,self.droprate)
-            fwd2 = fwd2.add_input(vec)
-            fwd_vec = fwd2.output()
-            fwd2_out.append(fwd_vec)
-
-        back2_out = []
-        for vec in reversed(lstm2_input):
-            if self.droprate > 0 and not test:
-                vec = dynet.dropout(vec,self.droprate)
-            back2 = back2.add_input(vec)
-            back_vec = back2.output()
-            back2_out.append(back_vec)
+        # lstm2_input = []
+        # for (f,b) in zip(fwd1_out,reversed(back1_out)):
+        #     lstm2_input.append(dynet.concatenate([f,b]))
+        #
+        # fwd2_out = []
+        # for vec in lstm2_input:
+        #     if self.droprate > 0 and not test:
+        #         vec = dynet.dropout(vec,self.droprate)
+        #     fwd2 = fwd2.add_input(vec)
+        #     fwd_vec = fwd2.output()
+        #     fwd2_out.append(fwd_vec)
+        #
+        # back2_out = []
+        # for vec in reversed(lstm2_input):
+        #     if self.droprate > 0 and not test:
+        #         vec = dynet.dropout(vec,self.droprate)
+        #     back2 = back2.add_input(vec)
+        #     back_vec = back2.output()
+        #     back2_out.append(back_vec)
 
         # fwd_out = [dynet.concatenate([f1,f2]) for (f1,f2) in zip(fwd1_out,fwd2_out)]
         # back_out = [dynet.concatenate([b1,b2]) for (b1,b2) in zip(back1_out,back2_out)]
 
-        return fwd2_out,back2_out[::-1]
+        fwd = fwd1_out
+        back = back1_out[::-1]
+        base_spans = [(i + 1, i + 1) for i in range(len(unigrams) - 2)]
+        for span in base_spans:
+            left, right = span
+            fwd_vec = fwd[right] - fwd[left - 1]
+            back_vec = back[left] - back[right + 1]
+            self.encoding[span] = self.upward_W * dynet.concatenate([fwd_vec, back_vec]) + self.upward_b
 
+    def update_encoding(self, left_span, right_span):
+        left_span_embedding = self.encoding[left_span]
+        self.encoding.pop(left_span)
+        right_span_embedding = self.encoding[right_span]
+        self.encoding.pop(right_span)
+        for k in self.encoding.keys():
+            # self.upwd = self.upwd.add_input(dynet.concatenate([embedding,embedding]))
+            # new_embedding = self.upwd.output()
 
-    def evaluate_labels(self,fwd_out,back_out,lefts,rights,test=False):
-        #fwd_out_value = [f.npvalue() for f in fwd_out]
-        #back_out_value=[b.npvalue() for b in back_out]
-        fwd_span_out = []
-        for left_index,right_index in zip(lefts,rights):
-            fwd_span_out.append(fwd_out[right_index] - fwd_out[left_index-1])
-        fwd_span_vec = dynet.concatenate(fwd_span_out)
-        #fwd_span_vec_value = [f.npvalue() for f in fwd_span_vec]
+            embedding = self.encoding[k]
+            new_embedding = self.upward_W * dynet.concatenate([embedding, embedding]) + self.upward_b
+            self.encoding[k] = new_embedding
 
-        back_span_out = []
-        for left_index,right_index in zip(lefts,rights):
-            back_span_out.append(back_out[left_index] - back_out[right_index+1])
-        back_span_vec = dynet.concatenate(back_span_out)
-        #back_span_vec_value = [b.npvalue() for f in back_span_vec]
+        # self.upwd = self.upwd.add_input(dynet.concatenate([left_span_embedding,right_span_embedding]))
+        new_span = (left_span[0], right_span[1])
+        # self.encoding[new_span] = self.upwd.output()
+        self.encoding[new_span] = self.upward_W * dynet.concatenate(
+            [left_span_embedding, right_span_embedding]) + self.upward_b
 
-        hidden_input = dynet.concatenate([fwd_span_vec,back_span_vec])
-        #hidden_input_value = hidden_input.npvalue()
+    def evaluate_labels(self, left_span, right_span, test=False):
 
-        if self.droprate >0 and not test:
+        hidden_input = dynet.concatenate([self.encoding[left_span], self.encoding[right_span]])
+
+        if self.droprate > 0 and not test:
             hidden_input = dynet.dropout(hidden_input,self.droprate)
 
         hidden_output = self.activation(self.hidden_W * hidden_input + self.hidden_b)
-        #hidden_output_value = hidden_output.npvalue()
-
-        #W_value = self.output_W.npvalue()
-        #b_value = self.output_b.npvalue()
-
         scores = (self.output_W * hidden_output + self.output_b)
 
-        #scores_value = scores.npvalue()
         return scores
+
+    # def evaluate_labels(self,fwd_out,back_out,lefts,rights,test=False):
+    #     #fwd_out_value = [f.npvalue() for f in fwd_out]
+    #     #back_out_value=[b.npvalue() for b in back_out]
+    #     fwd_span_out = []
+    #     for left_index,right_index in zip(lefts,rights):
+    #         fwd_span_out.append(fwd_out[right_index] - fwd_out[left_index-1])
+    #     fwd_span_vec = dynet.concatenate(fwd_span_out)
+    #     #fwd_span_vec_value = [f.npvalue() for f in fwd_span_vec]
+    #
+    #     back_span_out = []
+    #     for left_index,right_index in zip(lefts,rights):
+    #         back_span_out.append(back_out[left_index] - back_out[right_index+1])
+    #     back_span_vec = dynet.concatenate(back_span_out)
+    #     #back_span_vec_value = [b.npvalue() for f in back_span_vec]
+    #
+    #     hidden_input = dynet.concatenate([fwd_span_vec,back_span_vec])
+    #     #hidden_input_value = hidden_input.npvalue()
+    #
+    #     if self.droprate >0 and not test:
+    #         hidden_input = dynet.dropout(hidden_input,self.droprate)
+    #
+    #     hidden_output = self.activation(self.hidden_W * hidden_input + self.hidden_b)
+    #     #hidden_output_value = hidden_output.npvalue()
+    #
+    #     #W_value = self.output_W.npvalue()
+    #     #b_value = self.output_b.npvalue()
+    #
+    #     scores = (self.output_W * hidden_output + self.output_b)
+    #
+    #     #scores_value = scores.npvalue()
+    #     return scores
             
         
     def save(self,filename):
 
         self.model.save(filename)
 
-        with open (filename,'a') as f:
+        with open(filename + '.parameter', 'a') as f:
             f.write('\n')
             f.write('bigrams_size = {}\n'.format(self.bigrams_size))
             f.write('unigrams_size = {}\n'.format(self.unigrams_size))
@@ -311,8 +362,7 @@ class Network(object):
         Loads file created by save() method
         """
 
-        with open(filename) as f:
-            f.readline()
+        with open(filename + '.parameter') as f:
             f.readline()
             bigrams_size = int(f.readline().split()[-1])
             unigrams_size = int(f.readline().split()[-1])
@@ -334,7 +384,7 @@ class Network(object):
             span_nums=span_nums
         )
 
-        network.model.load(filename)
+        network.model.populate(filename)
 
         return network
 
@@ -418,24 +468,26 @@ class Network(object):
             for b in xrange(num_batched):
                 batch = training_data[(b * batch_size) : (b + 1) * batch_size]
 
-                dynet.renew_cg()
-                #error = []
+                dynet.renew_cg(immediate_compute=True, check_validity=True)
+                error = []
                 for example in batch:
-
                     loss,acc = Segmenter.exploration(example,fm,network,droprate,unk_params)
                     #loss = result['loss']
                     #total_states += result['state_cnt']
                     training_acc += acc
-                    #error.extend(loss)
-
+                    error.extend(loss)
 
                     if len(loss) == 0:
                         continue
-                    batch_error = dynet.esum(loss)
-                    #error_value = batch_error.npvalue()
-                    total_cost += batch_error.scalar_value()
-                    batch_error.backward()
-                    network.trainer.update()
+                if len(error) == 0:
+                    continue
+                    # else:
+                    # print (len(error))
+                batch_error = dynet.esum(error)
+                # error_value = batch_error.npvalue()
+                # print(batch_error.value())
+                batch_error.backward()
+                network.trainer.update()
 
                 #value = network.output_W.npvalue()
                 #print (network.output_b.npvalue())
