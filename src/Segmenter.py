@@ -95,6 +95,7 @@ class Segmenter(object):
 
         errors = []
         state_cnt = 0
+        cached_scores = {}
         for step in range(n):
             ap_scores = []
             # ap_value = []
@@ -102,11 +103,15 @@ class Segmenter(object):
                 left_span = state.cur_layer[i]
                 right_span = state.cur_layer[i + 1]
                 #left,right = state.l_features(span0,span1)
-                scores = network.evaluate_labels(
-                    left_span,
-                    right_span,
-                    test=False,
-                )
+                if not (left_span, right_span) in cached_scores:
+                    scores = network.evaluate_labels(
+                        left_span,
+                        right_span,
+                        test=False,
+                    )
+                    cached_scores[(left_span, right_span)] = scores
+                else:
+                    scores = cached_scores[(left_span, right_span)]
                 #ap_value.append(scores.npvalue())
                 ap_scores.append(scores)
 
@@ -164,8 +169,8 @@ class Segmenter(object):
             correct = self.label_index(self.gold_sentence[index-1][1])
             tmp = dynet.pick(probs, correct)
             # print(tmp.value())
-            if abs(tmp.value()) < 1e-50:
-                continue
+            # if abs(tmp.value()) < 1e-50:
+            #    continue
             loss = -dynet.log(tmp)
             #loss =  -dynet.log(dynet.pick(probs,correct))
             errors.append(loss)
@@ -190,15 +195,15 @@ class Segmenter(object):
             if len(candidates) == 0 :
                 index = np.argmin(ap_values)
                 tmp = dynet.pick(probs, index)
-                if abs(tmp.value()) > 1e-50:
-                    loss = - dynet.log(tmp)
-                    errors.append(loss)
+                # if abs(tmp.value()) > 1e-50:
+                loss = - dynet.log(tmp)
+                errors.append(loss)
             else:
                 index = pos.index(candidates[0])
                 tmp = dynet.pick(probs, index)
-                if abs(tmp.value()) > 1e-50:
-                    loss = - dynet.log(tmp)
-                    errors.append(loss)
+                # if abs(tmp.value()) > 1e-50:
+                loss = - dynet.log(tmp)
+                errors.append(loss)
             return errors
 
     def check_oracle(self,pos):
@@ -251,6 +256,7 @@ class Segmenter(object):
         network.evaluate_recurrent(fwd_b, u, test=True)
 
         state.prep_layer()
+        cached_scores = {}
         for step in range(n):
             ap_scores = []
 
@@ -258,11 +264,16 @@ class Segmenter(object):
                 left_span = state.cur_layer[i]
                 right_span = state.cur_layer[i + 1]
                 #left,right = state.l_features(span0,span1)
-                scores = network.evaluate_labels(
-                    left_span,
-                    right_span,
-                    test=True
-                )
+                if not (left_span, right_span) in cached_scores:
+                    scores = network.evaluate_labels(
+                        left_span,
+                        right_span,
+                        test=True
+                    )
+                    cached_scores[(left_span, right_span)] = scores
+                else:
+                    scores = cached_scores[(left_span, right_span)]
+
                 ap_scores.append(scores)
 
             combined_spans = state.select_combine(ap_scores)
